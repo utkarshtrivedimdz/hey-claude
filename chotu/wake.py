@@ -20,9 +20,15 @@ log = logging.getLogger(__name__)
 
 
 class WakeListener:
-    def __init__(self, cfg, on_wake: Callable[[float], None]):
+    def __init__(self, cfg, on_wake: Callable[[float], None],
+                 on_mic_lost: Callable[[], None] | None = None):
         self.cfg = cfg
         self.on_wake = on_wake
+        # Called (from this thread) when the mic stops delivering audio — i.e. the input
+        # device disconnected (Bluetooth headset dropped). The runtime turns this into a
+        # clean daemon stop so it doesn't sit silently deaf; recovery is manual (reconnect
+        # the mic + restart). None => no-op (e.g. tests).
+        self.on_mic_lost = on_mic_lost
         self._stop = False
         self._model = None
         self._key = None
@@ -51,12 +57,20 @@ class WakeListener:
             self._load()
             log.info("wake model loaded: key=%s framework=%s", self._key, self.cfg.wake_inference_framework)
             CHUNK = 1280  # 80 ms @ 16 kHz — openWakeWord's frame size
+            # No-audio watchdog: PortAudio calls _cb continuously (~every 80 ms) even in
+            # silence, so a prolonged gap means the device stopped delivering — i.e. it
+            # disconnected (Bluetooth headset dropped). A `device=None` stream binds to a
+            # concrete device at open time and does NOT follow a default-device change, so
+            # the callback simply ceases. 5 s is well past normal Bluetooth burst jitter.
+            STALL_S = 5.0
             # Capture in a real-time callback that only buffers → the queue absorbs
             # bursty Bluetooth delivery so predict() (56x realtime) never causes overflow.
             q: "_queue.Queue[bytes]" = _queue.Queue()
             ovf = [0]
+            last_cb = [time.time()]  # wall-clock of the most recent callback (stall watchdog)
 
             def _cb(indata, frames, time_info, status):
+                last_cb[0] = time.time()
                 if status and status.input_overflow:
                     ovf[0] += 1
                 q.put(bytes(indata))
@@ -69,6 +83,14 @@ class WakeListener:
                 log.info("mic stream open (callback): device=%s threshold=%.2f",
                          self.cfg.mic_device, self.cfg.wake_threshold)
                 while not self._stop:
+                    gap = time.time() - last_cb[0]
+                    if gap > STALL_S:
+                        log.critical("mic input lost — no audio for %.0fs (device likely "
+                                     "disconnected); stopping daemon (reconnect mic + "
+                                     "restart to resume)", gap)
+                        if self.on_mic_lost:
+                            self.on_mic_lost()
+                        return
                     try:
                         data = q.get(timeout=0.5)
                     except _queue.Empty:

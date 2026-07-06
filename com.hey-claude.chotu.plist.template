@@ -19,8 +19,14 @@
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- Restart on a crash (non-zero exit), but NOT on a clean exit(0). chotu exits 0
+         when the mic device disconnects (Bluetooth drop) so it stops instead of running
+         deaf; SuccessfulExit=false leaves it down for a manual reconnect + restart. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <key>StandardOutPath</key>
     <string>__HOME__/Library/Logs/hey-claude/daemon.out.log</string>

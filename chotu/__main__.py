@@ -27,6 +27,7 @@ _SOUNDS = {
     "stop": "Funk", "error": "Basso",
     "listening": "Glass",   # dictation verified ON (button turned blue)
     "dropped": "Sosumi",    # dictation turned OFF externally mid-turn (mic clicked off)
+    "deaf": "Submarine",    # mic device disconnected → daemon stopping (manual restart)
 }
 
 
@@ -71,9 +72,17 @@ def run(cfg, once: bool = False) -> int:
 
     sm, ax = _build(cfg)
     q: "queue.Queue[float]" = queue.Queue()
-    state = {"armed_once": False}
+    state = {"armed_once": False, "mic_lost": False}
 
     def tick(_timer):
+        # Mic device disconnected (Bluetooth drop) → stop cleanly rather than sit deaf.
+        # Clean exit(0) + plist KeepAlive={SuccessfulExit: false} means launchd leaves it
+        # down; recovery is manual (reconnect mic + restart). A real crash still respawns.
+        if state["mic_lost"]:
+            log.critical("mic lost — stopping daemon (clean exit; reconnect mic + restart to resume)")
+            _beep("deaf")
+            CFRunLoopStop(CFRunLoopGetCurrent())
+            return
         drained = 0
         while True:
             try:
@@ -100,7 +109,9 @@ def run(cfg, once: bool = False) -> int:
         q.put(1.0)
     else:
         from .wake import WakeListener
-        listener = WakeListener(cfg, lambda score: q.put(score))
+        def _on_mic_lost():  # called from the wake thread; tick() (main thread) acts on it
+            state["mic_lost"] = True
+        listener = WakeListener(cfg, lambda score: q.put(score), on_mic_lost=_on_mic_lost)
         threading.Thread(target=listener.run, name="wake", daemon=True).start()
         log.info("chotu listening: wake=%r model=%r device=%s",
                  cfg.wake_phrase, cfg.wake_model or cfg.wake_pretrained_fallback, cfg.mic_device)

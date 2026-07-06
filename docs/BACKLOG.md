@@ -59,17 +59,21 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Robustness / ops
 
-- [ ] **Recover from mic device loss (Bluetooth drop silently deafens chotu).**
-  Hit 2026-07-06: disconnecting the OnePlus Buds mid-session left the daemon alive
-  but deaf — the wake stream is opened once at startup bound to `device=None` (the
-  default input *at that time*); when that device disappears PortAudio delivers
-  silence and no callbacks, with **no error logged**, so chotu looks running but hears
-  nothing until a manual restart. Fix: watch the PortAudio stream status / a
-  device-change notification and either (a) re-open the stream on the new default
-  input, or (b) raise/exit so launchd `KeepAlive` restarts on a live device. At
-  minimum, log the stall (e.g. N seconds of zero callbacks) instead of failing silent.
-  Note the Mac Mini has no built-in mic, so on a drop there may be *no* usable input
-  until the Buds/USB mic reconnect — the re-open must retry, not exit-loop.
+- [x] **Recover from mic device loss (Bluetooth drop silently deafened chotu).**
+  Done 2026-07-07. Symptom (2026-07-06): disconnecting the OnePlus Buds mid-session
+  left the daemon alive but deaf — the wake stream is opened once at startup bound to
+  `device=None` (the default input *at that time*); when that device disappears
+  PortAudio stops calling the callback, with no error logged, so chotu looked running
+  but heard nothing until a manual restart. **Chosen approach: detect-and-stop with
+  manual recovery** (user preference — they restart when they reconnect the headset),
+  not self-heal/re-open. `wake.py` runs a no-audio watchdog: no callback for 5 s ⇒
+  `on_mic_lost` ⇒ `__main__` logs CRITICAL, plays the `deaf` beep (Submarine), and
+  cleanly stops the run loop (exit 0). The LaunchAgent `KeepAlive` is now
+  `{SuccessfulExit: false}` so a clean stop stays down (manual reconnect + restart)
+  while a real crash still respawns. Flow: disconnect → beep + stop; reconnect →
+  `launchctl kickstart`/reload to resume (mic re-binds to the live device on startup).
+  *Deferred:* auto self-heal (re-open on reconnect) — revisit only if the manual flow
+  gets tedious.
 
 - [ ] **LaunchAgent as a signed `.app` bundle** for clean TCC identity — the
   raw-`python`-binary Mic/Accessibility grant for launchd is finicky. Only if the
