@@ -1,26 +1,58 @@
 # hey-claude 🎙️ → Claude Code
 
-Wake-word voice controller for driving the **Claude Code VS Code extension**
-hands-free on macOS. Say **"chotu"**, dictate your prompt, end with a command word
-("okay send") — and it submits. Offline, single-user, personal.
+Hands-free **voice control for the Claude Code VS Code extension** on macOS. Say the
+wake word (**"chotu"**), dictate your prompt, and end with a spoken command
+("okay send") — chotu focuses VS Code, drives the Claude input box, strips the command,
+and submits. Offline, single-user, personal; runs as a background LaunchAgent so it's
+always listening.
 
-**Status:** v1 implementation. Design is fully specified and every integration
-point is verified — see [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md),
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md).
+**Status:** v1 shipped and in daily use; hardening ongoing (see
+[`docs/BACKLOG.md`](docs/BACKLOG.md)). Design + verified integration points:
+[`REQUIREMENTS`](docs/REQUIREMENTS.md) · [`ARCHITECTURE`](docs/ARCHITECTURE.md) ·
+[`BUILD-PLAN`](docs/BUILD-PLAN.md).
+
+## What it does
+
+- **Wake-word activation** — an always-listening [openWakeWord](https://github.com/dscripka/openWakeWord)
+  model arms on "chotu" (or a pretrained fallback phrase until you train your own).
+  Nothing leaves the machine.
+- **Focus safety** — on wake it launches/raises VS Code and opens your target
+  `.code-workspace`, then *verifies* that window is frontmost before any keystroke — so
+  it never types into an unrelated window. Works from any app (raises VS Code via
+  LaunchServices).
+- **Voice dictation** — starts macOS dictation by pressing the Claude panel's
+  Voice-dictation button through Accessibility, and reads that button's state as the
+  ground truth for whether it's recording (no fragile keystroke shortcut).
+- **Spoken commands** — end a prompt with a prefixed command word and chotu acts:
+  **"okay send"** submits · **"okay cancel"** / **"clear"** wipes the box ·
+  **"okay stop"** interrupts Claude. The command word is stripped so it never reaches Claude.
+- **Never auto-sends** — a turn submits *only* on an explicit "send"; any mic-off,
+  timeout, or external interruption ends the turn silently.
+- **Dictation fixups** — a substitution map corrects common mishearings
+  (e.g. "clod code" → "Claude Code") before the prompt is sent.
+- **Mic-drop resilience** — if your Bluetooth mic disconnects mid-session, chotu stops
+  cleanly instead of running deaf; reconnect and run `chotu-restart` to resume.
+- **Telemetry for tuning** — every turn appends a structured, redactable JSONL event
+  (audio is never stored) so you can tune the wake threshold and command precision.
 
 ## How it works
 
 ```
-"chotu"  →  open/focus VS Code + geofast workspace  →  Cmd+Esc (focus) → Cmd+D (dictate)
+"chotu"  →  launch/raise VS Code + open target workspace  →  verify frontmost (focus gate)
+         →  Cmd+Esc (focus Claude input) → AXPress the Voice-dictation button (start mic)
          →  you speak: "add a retry loop. okay send."
-         →  chotu reads the box (AXObserver), sees the trailing "okay send"
-         →  Cmd+D (stop) → backspaces "okay send" → Return
+         →  chotu watches the box via AXObserver, sees the trailing "okay send"
+         →  strip "okay send" → Return  (then mic off)
 ```
 
-Only the wake word ("chotu") is a trained model. Every **command** is read from the
-input box text and string-matched (Option A), so the command word is stripped before
-the prompt reaches Claude. Reads are event-driven via macOS Accessibility; writes are
-keystrokes (`osascript`). Details + diagrams in [ARCHITECTURE](docs/ARCHITECTURE.md).
+Only the wake word is a trained model. Every **command** is read from the input-box
+text and string-matched (token-based, punctuation-tolerant), so the command word is
+stripped before the prompt reaches Claude. Reads are event-driven via macOS
+Accessibility (`AXObserver`); dictation start/stop is an `AXPress` on the panel button
+(its `AXTitleChanged` is the recording ground truth); other writes are keystrokes. The
+turn flows `IDLE → ARMED → DICTATING → ACTING → IDLE`, driven entirely by the
+dictation-button state (no silence timer). Details + diagrams in
+[ARCHITECTURE](docs/ARCHITECTURE.md).
 
 ## Setup
 
@@ -58,6 +90,22 @@ python -m chotu --read
 python -m chotu
 launchctl load ~/Library/LaunchAgents/com.hey-claude.chotu.plist
 ```
+
+## Restart / recovery
+
+The daemon opens the mic once at startup and binds to the current default input. If
+that device disappears (Bluetooth headset drops), chotu **stops cleanly** rather than
+sit there deaf — the `KeepAlive={SuccessfulExit: false}` LaunchAgent leaves it down so
+recovery is deliberate. Reconnect the mic, then:
+
+```bash
+chotu-restart      # kicks the daemon and prints which input device it bound to
+```
+
+`chotu-restart` ([`scripts/chotu-restart.sh`](scripts/chotu-restart.sh), aliased in
+`~/.zshrc` by setup) restarts via `launchctl` and reports the mic so you can confirm it
+grabbed the headset — not a silent HDMI/virtual fallback. Reconnect *before* restarting;
+starting with no input device leaves it deaf. A genuine crash still auto-restarts.
 
 ## Debug logging
 
@@ -120,6 +168,9 @@ Hard-won from the first live ride (2026-07-06):
   Bluetooth headset is your only input.
 - **`overflow=True` / dropped audio** — bursty Bluetooth delivery; the callback+queue
   capture handles it (heartbeat should show `overflows=0`, ~25 chunks/2s).
+- **"hey jarvis" stops working after unplugging the headset** — by design: a mic
+  disconnect stops the daemon (look for `mic input lost` in `daemon.err.log`). Reconnect
+  and run `chotu-restart` (see [Restart / recovery](#restart--recovery)).
 - **Command word ends up in the sent prompt** — dictation writes "Okay. Send." with
   punctuation; the token-based matcher strips it. If a new command word misfires,
   check `box_pre_strip` in the telemetry.
@@ -127,8 +178,8 @@ Hard-won from the first live ride (2026-07-06):
 ## Layout
 
 ```
-chotu/      config ports commands state telemetry bootstrap ax keys system wake __main__
-scripts/    stats.py  setup.sh  train_chotu.md
+chotu/      config ports commands state actions telemetry bootstrap ax keys system wake __main__
+scripts/    stats.py  setup.sh  train_chotu.md  chotu-restart.sh
 tests/      unit suite + integration/
-docs/       REQUIREMENTS · ARCHITECTURE · BUILD-PLAN
+docs/       REQUIREMENTS · ARCHITECTURE · BUILD-PLAN · HARDENING-PLAN · BACKLOG
 ```
