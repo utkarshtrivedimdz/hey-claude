@@ -14,6 +14,21 @@ Actionable task list (the aspirational roadmap lives in
   wake-score distribution, set the threshold at the knee (~0.4 for this mic). Same
   loop for false-trigger rate and the Q11b command prefix.
 
+## Voice control of dialogs & buttons (AXPress) — verified feasible
+
+- [ ] **Press-by-name via AXPress.** Verified 2026-07-06: when a tab is active,
+  Claude Code's question dialogs expose their options as `AXRadioButton` and the
+  `Submit answers` / `Close` as `AXButton`, all with the `AXPress` action — and
+  panel controls (`Voice dictation`, `New session`, `Add`, `Bypass permissions`)
+  are `AXPress`-able too. Add commands that (a) find an element whose label contains
+  a spoken keyword and `AXPress` it, (b) `AXPress` a named button. Enables answering
+  choice/permission dialogs and hitting panel buttons entirely by voice.
+  - **Constraint:** only the ACTIVE tab is in the AX tree — a dialog in a background
+    tab is invisible; the command must focus that tab first (or fail with a cue).
+  - **Bonus:** `AXPress` the `Voice dictation` button instead of `Cmd+D` — avoids the
+    VS Code multi-cursor collision; more robust dictation start.
+- [ ] Keystroke fallback for widgets that don't expose `AXPress` (↑/↓ + Enter, Esc).
+
 ## UX
 
 - [ ] **Menu-bar state indicator** (idle / armed / dictating). It's headless now, so
