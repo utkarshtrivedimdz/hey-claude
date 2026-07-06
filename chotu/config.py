@@ -54,6 +54,9 @@ class Config:
     command_words: dict = field(default_factory=_default_words)
     placeholders: list = field(default_factory=_default_placeholders)
 
+    # dictation fixups: mishearing → correction (case-insensitive, whole-word)
+    fixups: dict = field(default_factory=dict)
+
     # timeouts / windows
     arm_timeout_s: float = 8.0
     disarm_timeout_s: float = 10.0
@@ -107,6 +110,8 @@ def load(path: Optional[str] = None) -> Config:
     cfg.command_prefix = cmd.get("prefix", cfg.command_prefix)
     cfg.command_words = cmd.get("words", cfg.command_words)
     cfg.placeholders = cmd.get("placeholders", cfg.placeholders)
+
+    cfg.fixups = data.get("fixups", cfg.fixups)
 
     tmo = data.get("timeouts", {})
     cfg.arm_timeout_s = float(tmo.get("arm_s", cfg.arm_timeout_s))

@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 
 from . import __version__, config as config_mod
-from .commands import from_config
+from .commands import from_config, fixups_from_config
 from .state import StateMachine, S
 from .telemetry import Telemetry
 
@@ -54,7 +54,8 @@ def _build(cfg):
     keys = RealKeys(cfg.keymap)
     boot = Bootstrap(system, cfg)
     tel = Telemetry(cfg)
-    sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel, beep=_beep)
+    sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel, beep=_beep,
+                      fixups=fixups_from_config(cfg))
     ax.set_manual_a11y()  # unlock the a11y tree at startup (per-process, resets on VS Code relaunch)
     return sm, ax
 

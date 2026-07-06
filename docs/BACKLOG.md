@@ -5,18 +5,6 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Near-term
 
-- [ ] **Dictation fixups (substitution map).** Requested 2026-07-06 — dictation
-  mishears proper nouns ("Claude" → "clot code"). Add a `[fixups]` table to
-  `config.toml` mapping mis-hearings → corrections; apply in the command dispatch
-  **after strip, before Return** (read box → substitute → `Cmd+A` + retype →
-  Return). Case-insensitive, whole-word. Uses the verified read+rewrite path.
-  ~15 lines in `commands.py`/`state.py` + config + tests.
-  ```toml
-  [fixups]
-  clot = "Claude"
-  "clod code" = "Claude Code"
-  ```
-
 - [ ] **Train the "chotu" wake model (highest-leverage for accuracy).** Replace the
   `hey_jarvis` fallback. Do it with **positives recorded through the actual Bluetooth
   mic** (domain match) — scores swung 0.4–0.95 on the generic model; a personalized
@@ -58,6 +46,12 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Done (shipped in v1)
 
+- [x] **Dictation fixups (substitution map).** Requested + shipped 2026-07-06 —
+  `[fixups]` table in `config.toml` maps mishearings → corrections (case-insensitive,
+  whole-word, longest key wins). Applied to the prompt after command strip, before
+  Return; a real change triggers the read→rewrite path (`Cmd+A` + retype), otherwise
+  the fast backspace+Return send is untouched. `Fixups` in `commands.py`, wired via
+  `state.py` `_dispatch`; seeded with `clot`/`clod`(`code`) → `Claude`(` Code`).
 - [x] Core loop: wake → bootstrap → dictate → read box → strip command → send.
 - [x] Token-based command matching (handles dictation punctuation "Okay. Send.").
 - [x] onnxruntime pin (<1.19) — fixed silent 0.000 wake scores.

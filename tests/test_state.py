@@ -2,13 +2,13 @@
 import pytest
 
 from chotu.config import Config
-from chotu.commands import from_config
+from chotu.commands import from_config, Fixups
 from chotu.state import StateMachine, S
 from chotu.bootstrap import BootstrapResult
 from tests.fakes import FakeClock, FakeKeys, FakeAX, FakeBootstrap, FakeTelemetry
 
 
-def make(boot=None, disarm=10.0):
+def make(boot=None, disarm=10.0, fixups=None):
     cfg = Config()
     cfg.command_prefix = ["okay"]
     cfg.disarm_timeout_s = disarm
@@ -16,7 +16,7 @@ def make(boot=None, disarm=10.0):
     keys, ax, tel = FakeKeys(), FakeAX(), FakeTelemetry()
     boot = boot or FakeBootstrap()
     sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel,
-                      monotonic=clock.now)
+                      monotonic=clock.now, fixups=fixups)
     return sm, cfg, clock, keys, ax, tel, boot
 
 
@@ -95,3 +95,36 @@ def test_correction_flagged_when_cancel_follows_send():
     ax.feed("okay cancel")
     assert tel.corrections and tel.corrections[-1]["turn_id"] == sent_id
     assert tel.corrections[-1]["signal"] == "cancel"
+
+
+def test_fixup_rewrites_box_on_send():
+    fx = Fixups({"clot code": "Claude Code"})
+    sm, cfg, clock, keys, ax, tel, boot = make(fixups=fx)
+    sm.on_wake(0.9)
+    ax.feed("open clot code okay send")
+    assert sm.state is S.IDLE
+    # corrected → full rewrite path (not backspace): select-all, retype fixed prompt, Return
+    assert keys.names()[-3:] == ["clear", "type", "ret"]
+    assert ("type", "open Claude Code") in keys.ops
+    assert not any(o[0] == "backspace" for o in keys.ops)
+    assert tel.turns[-1]["outcome"] == "sent"
+    assert tel.turns[-1]["box_post"] == "open Claude Code"
+
+
+def test_no_fixup_uses_fast_backspace_send():
+    fx = Fixups({"clot code": "Claude Code"})
+    sm, cfg, clock, keys, ax, tel, boot = make(fixups=fx)
+    sm.on_wake(0.9)
+    ax.feed("nothing to fix okay send")
+    # no mishearing → fast path unchanged (backspace the command, Return; no retype)
+    assert keys.names()[-2:] == ["backspace", "ret"]
+    assert not any(o[0] == "type" for o in keys.ops)
+    assert tel.turns[-1]["box_post"] == "nothing to fix"
+
+
+def test_default_fixups_is_noop():
+    # StateMachine with no fixups injected still sends via the fast path.
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_wake(0.9)
+    ax.feed("open clot code okay send")
+    assert keys.names()[-2:] == ["backspace", "ret"]

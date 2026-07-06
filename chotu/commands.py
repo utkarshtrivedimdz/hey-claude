@@ -90,3 +90,37 @@ class Commands:
 
 def from_config(cfg) -> Commands:
     return Commands(cfg.command_words, cfg.command_prefix, cfg.placeholders)
+
+
+class Fixups:
+    """Case-insensitive, whole-word correction of dictation mishearings (FR-5).
+
+    Dictation mishears proper nouns ("Claude" → "clot code"). We map mishearing →
+    correction and apply it to the prompt AFTER the trailing command is stripped and
+    BEFORE Return, via the verified read→Cmd+A→retype path. Longest keys first so a
+    multi-word mishearing ("clod code" → "Claude Code") wins over a single-word one.
+
+    Replacements go through a function callback (not re.sub's string form) so a
+    correction containing backslashes or "\\g" can never be misread as a group ref.
+    """
+
+    def __init__(self, mapping: Optional[Dict[str, str]] = None):
+        pairs = sorted(
+            ((k.strip(), v) for k, v in (mapping or {}).items() if k and k.strip()),
+            key=lambda kv: len(kv[0].split()), reverse=True,
+        )
+        self._subs = [
+            (re.compile(rf"\b{re.escape(k)}\b", re.IGNORECASE), v) for k, v in pairs
+        ]
+
+    def apply(self, text: Optional[str]) -> Optional[str]:
+        if not text or not self._subs:
+            return text
+        out = text
+        for pat, repl in self._subs:
+            out = pat.sub(lambda _m, r=repl: r, out)
+        return out
+
+
+def fixups_from_config(cfg) -> Fixups:
+    return Fixups(getattr(cfg, "fixups", None))

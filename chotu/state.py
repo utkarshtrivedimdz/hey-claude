@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 from .bootstrap import BootstrapResult
+from .commands import Fixups
 
 
 class S(Enum):
@@ -26,12 +27,14 @@ class StateMachine:
         self, cfg, bootstrap, keys, ax, commands, telemetry,
         monotonic: Callable[[], float] = time.monotonic,
         beep: Callable[[str], None] = lambda kind: None,
+        fixups: Optional[Fixups] = None,
     ):
         self.cfg = cfg
         self.bootstrap = bootstrap
         self.keys = keys
         self.ax = ax
         self.commands = commands
+        self.fixups = fixups or Fixups()
         self.tel = telemetry
         self._mono = monotonic
         self._beep = beep
@@ -105,6 +108,7 @@ class StateMachine:
         self.ax.stop_observing()
         self.keys.cmd_d()  # stop dictation → frees the mic
 
+        box_post = m.post_text
         if m.action == "send":
             if not m.post_text.strip():
                 # box was only the command → nothing to send; treat as a no-op abort.
@@ -113,8 +117,17 @@ class StateMachine:
                 self._log_turn("empty", m.action, m.prefix, text, 0, box_post=m.post_text)
                 self.state = S.IDLE
                 return
-            self.keys.backspace(m.strip_len)
-            self.keys.ret()
+            corrected = self.fixups.apply(m.post_text)
+            if corrected != m.post_text:
+                # a mishearing was corrected → rewrite the whole box (read→rewrite path):
+                # select-all + delete, retype the fixed prompt, then Return.
+                self.keys.clear()
+                self.keys.type_text(corrected)
+                self.keys.ret()
+                box_post = corrected
+            else:
+                self.keys.backspace(m.strip_len)
+                self.keys.ret()
             outcome, strip = "sent", m.strip_len
         elif m.action == "cancel":
             self.keys.clear()
@@ -125,7 +138,7 @@ class StateMachine:
 
         self._beep(m.action)
         self._resolve_wake(True)
-        turn_id = self._log_turn(outcome, m.action, m.prefix, text, strip, box_post=m.post_text)
+        turn_id = self._log_turn(outcome, m.action, m.prefix, text, strip, box_post=box_post)
 
         if outcome in ("cancelled", "stopped") and self._last_send is not None:
             tid, ts = self._last_send

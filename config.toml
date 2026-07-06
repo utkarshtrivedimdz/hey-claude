@@ -23,6 +23,16 @@ send   = ["send", "submit", "go", "enter"]
 cancel = ["cancel", "scratch that", "nevermind", "never mind"]
 stop   = ["stop", "interrupt", "abort"]
 
+[fixups]
+# Dictation mishears proper nouns; map mishearing → correction. Applied to the prompt
+# after the trailing command is stripped and before Return (case-insensitive, whole-word;
+# longest key wins). Only a real change triggers the read→rewrite path — otherwise the
+# fast backspace+Return send is untouched.
+"clot code" = "Claude Code"
+"clod code" = "Claude Code"
+clot = "Claude"
+clod = "Claude"
+
 [target]
 bundle_id    = "com.microsoft.VSCode"
 workspace    = "/Volumes/GeofastStorage/GitHub/geofast.code-workspace"
