@@ -26,6 +26,15 @@ Actionable task list (the aspirational roadmap lives in
   (AXValue is broad, but not every app exposes an editable `AXTextArea`). Big scope
   item — likely its own design doc + ADR before it spreads.
 
+- [ ] **VAD-based off-ramp instead of a fixed silence timeout.** Today disarm is a
+  timer that resets on every box change (`disarm_s`) — already activity-driven, but it
+  can't tell "pausing to think mid-prompt" from "walked away," so a long silent pause
+  still disarms and sends time out. openWakeWord bundles `silero_vad`; run it on the
+  mic to keep the session armed while there's *voice activity* (even between dictation
+  updates) and only start the off-ramp countdown once the user actually stops speaking.
+  Keep a hard max-arm ceiling as a safety backstop — a false wake must still auto-clear.
+  Directly attacks the send-timeout problem without relying on an ever-longer timer.
+
 - [ ] **Press-by-name via AXPress.** Verified 2026-07-06: when a tab is active,
   Claude Code's question dialogs expose their options as `AXRadioButton` and the
   `Submit answers` / `Close` as `AXButton`, all with the `AXPress` action — and
