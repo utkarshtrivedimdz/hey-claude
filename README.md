@@ -11,6 +11,19 @@ always listening.
 [`REQUIREMENTS`](docs/REQUIREMENTS.md) · [`ARCHITECTURE`](docs/ARCHITECTURE.md) ·
 [`BUILD-PLAN`](docs/BUILD-PLAN.md).
 
+## Why hey-claude (vs. plain dictation / hotkey tools)
+
+- **Truly hands-free** — no hotkey, no clicking into a box. Say "chotu" from *any* app
+  and it opens/raises VS Code, focuses the Claude input, and starts the mic for you.
+- **Knows Claude's actions** — you speak "send", "cancel", "clear", "stop"; generic
+  dictation can only type text, it can't submit, interrupt, or wipe the box.
+- **Won't send by accident** — it types your words but only *you* trigger the submit; a
+  pause or dropped mic never fires a message.
+- **Private & offline** — wake detection runs locally; nothing is streamed to a cloud
+  speech service.
+- **Fixes what it mishears** — auto-corrects recurring slips (e.g. "clod" → "Claude")
+  before sending.
+
 ## What it does
 
 - **Wake-word activation** — an always-listening [openWakeWord](https://github.com/dscripka/openWakeWord)
