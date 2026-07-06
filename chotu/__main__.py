@@ -60,8 +60,8 @@ def _build(cfg):
 
 
 def run(cfg, once: bool = False) -> int:
-    from Foundation import NSTimer, NSRunLoop
-    from CoreFoundation import CFRunLoopGetCurrent, CFRunLoopStop
+    from Foundation import NSTimer
+    from CoreFoundation import CFRunLoopGetCurrent, CFRunLoopStop, CFRunLoopRun
 
     sm, ax = _build(cfg)
     q: "queue.Queue[float]" = queue.Queue()
@@ -93,8 +93,10 @@ def run(cfg, once: bool = False) -> int:
         print(f"chotu listening (wake='{cfg.wake_phrase}', "
               f"model='{cfg.wake_model or cfg.wake_pretrained_fallback}'). Ctrl+C to quit.")
 
+    # CFRunLoopRun() (not NSRunLoop.run()) so CFRunLoopStop cleanly ends --once.
+    # The AXObserver source and NSTimer both live on this same run loop.
     try:
-        NSRunLoop.currentRunLoop().run()
+        CFRunLoopRun()
     except KeyboardInterrupt:
         pass
     return 0

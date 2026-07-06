@@ -4,13 +4,21 @@ The extension's dictation transcribes the command word INTO the box, so we detec
 trailing command word (optionally requiring a disambiguating prefix, Q11b) and
 compute how many characters to backspace so the command never reaches Claude.
 
-No I/O here — this is the most-tested module (see tests/test_commands.py).
+Matching is TOKEN-based: real dictation renders "okay send" as "Okay. Send." (caps
++ sentence punctuation), so we normalize each token (strip edge punctuation,
+lowercase) rather than matching raw whitespace. This gap was found on the first live
+ride (2026-07-06) — see tests/test_commands.py for the dictation cases.
+
+No I/O here — the most-tested module.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+_TOKEN = re.compile(r"\S+")
+_EDGE_PUNCT = ".,!?;:\"')(“”‘’…"
 
 
 @dataclass
@@ -29,21 +37,14 @@ class Commands:
         prefixes: Optional[List[str]] = None,
         placeholders: Optional[List[str]] = None,
     ):
-        self.words = {a: sorted(syns, key=len, reverse=True) for a, syns in words.items()}
-        self.prefixes = [p for p in (prefixes or []) if p]
+        # each synonym → list of lowercased tokens (supports multi-word, e.g. "scratch that");
+        # longest synonyms first so they win over any shorter sub-match.
+        self.words = {
+            a: sorted((s.lower().split() for s in syns), key=len, reverse=True)
+            for a, syns in words.items()
+        }
+        self.prefixes = [p.lower() for p in (prefixes or []) if p]
         self.placeholders = set(placeholders or [])
-        self._patterns: Dict[str, re.Pattern] = {}
-
-        # A leading (?:^|\s+) both provides a word boundary (so "resend" != "send")
-        # and consumes the whitespace before the command so strip removes it too.
-        pfx = ""
-        if self.prefixes:
-            pfx = r"(?:%s)\s+" % "|".join(re.escape(p) for p in self.prefixes)
-        for action, syns in self.words.items():
-            syn = "|".join(re.escape(s) for s in syns)
-            self._patterns[action] = re.compile(
-                r"(?:^|\s+)%s(?:%s)\s*[.!?,;:]*\s*$" % (pfx, syn), re.IGNORECASE
-            )
 
     def match(self, text: Optional[str]) -> Optional[Match]:
         """Return the trailing command in `text`, or None. Longest match wins."""
@@ -53,32 +54,38 @@ class Commands:
         if not stripped or stripped in self.placeholders:
             return None
 
-        best: Optional[Match] = None
-        for action, pat in self._patterns.items():
-            m = pat.search(text)
-            if not m:
-                continue
-            start = m.start()
-            strip_len = len(text) - start
-            cand = Match(
-                action=action,
-                phrase=text[start:],
-                strip_len=strip_len,
-                post_text=text[:start].rstrip(),
-                prefix=(self._extract_prefix(text[start:]) if self.prefixes else None),
-            )
-            if best is None or cand.strip_len > best.strip_len:
-                best = cand
-        return best
+        toks = [(m.start(), m.group()) for m in _TOKEN.finditer(text)]
+        norms = [raw.strip(_EDGE_PUNCT).lower() for _, raw in toks]
+        if not norms:
+            return None
 
-    def _extract_prefix(self, phrase: str) -> Optional[str]:
-        toks = phrase.strip().split()
-        if toks:
-            low = toks[0].lower()
-            for p in self.prefixes:
-                if p.lower() == low:
-                    return p
-        return None
+        best: Optional[Match] = None
+        for action, syn_lists in self.words.items():
+            for syn in syn_lists:
+                n = len(syn)
+                if n == 0 or len(norms) < n or norms[-n:] != syn:
+                    continue
+                cmd_i = len(toks) - n
+                if self.prefixes:
+                    if cmd_i == 0 or norms[cmd_i - 1] not in self.prefixes:
+                        continue
+                    start_i, prefix_used = cmd_i - 1, norms[cmd_i - 1]
+                else:
+                    start_i, prefix_used = cmd_i, None
+
+                start = toks[start_i][0]
+                while start > 0 and text[start - 1].isspace():  # swallow leading whitespace
+                    start -= 1
+                cand = Match(
+                    action=action,
+                    phrase=text[start:],
+                    strip_len=len(text) - start,
+                    post_text=text[:start].rstrip(),
+                    prefix=prefix_used,
+                )
+                if best is None or cand.strip_len > best.strip_len:
+                    best = cand
+        return best
 
 
 def from_config(cfg) -> Commands:
