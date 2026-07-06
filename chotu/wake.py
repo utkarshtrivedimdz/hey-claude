@@ -54,27 +54,42 @@ class WakeListener:
             self._key = self.cfg.wake_pretrained_fallback
 
     def run(self) -> None:
+        import queue as _queue
         import numpy as np
         import sounddevice as sd
 
         try:
             self._load()
-            _dbg(f"model loaded: key={self._key}")
+            _dbg(f"model loaded: key={self._key} fw={self.cfg.wake_inference_framework}")
             CHUNK = 1280  # 80 ms @ 16 kHz — openWakeWord's frame size
+            # Capture in a real-time callback that only buffers → the queue absorbs
+            # bursty Bluetooth delivery so predict() (56x realtime) never causes overflow.
+            q: "_queue.Queue[bytes]" = _queue.Queue()
+            ovf = [0]
+
+            def _cb(indata, frames, time_info, status):
+                if status and status.input_overflow:
+                    ovf[0] += 1
+                q.put(bytes(indata))
+
             hb, mx, cnt = time.time(), 0.0, 0
             with sd.InputStream(
                 samplerate=16000, channels=1, dtype="int16",
-                blocksize=CHUNK, device=self.cfg.mic_device,
-            ) as stream:
-                _dbg(f"stream open: device={self.cfg.mic_device} thr={self.cfg.wake_threshold}")
+                blocksize=CHUNK, device=self.cfg.mic_device, callback=_cb,
+            ):
+                _dbg(f"stream open (callback): device={self.cfg.mic_device} thr={self.cfg.wake_threshold}")
                 while not self._stop:
-                    data, overflow = stream.read(CHUNK)
-                    audio = np.frombuffer(bytes(data), dtype="int16")
+                    try:
+                        data = q.get(timeout=0.5)
+                    except _queue.Empty:
+                        continue
+                    audio = np.frombuffer(data, dtype="int16")
                     score = float(self._model.predict(audio).get(self._key, 0.0))
                     mx, cnt = max(mx, score), cnt + 1
                     if _DEBUG and time.time() - hb > 2.0:
-                        _dbg(f"heartbeat chunks={cnt} max_score={mx:.3f} overflow={overflow} rms={int(np.abs(audio).mean())}")
-                        hb, mx, cnt = time.time(), 0.0, 0
+                        _dbg(f"heartbeat chunks={cnt} max_score={mx:.3f} overflows={ovf[0]} "
+                             f"qsize={q.qsize()} rms={int(np.abs(audio).mean())}")
+                        hb, mx, cnt, ovf[0] = time.time(), 0.0, 0, 0
                     if score >= self.cfg.wake_log_floor:
                         self.on_wake(score)
         except Exception:
