@@ -88,6 +88,25 @@ The correctness-critical logic (command match/strip, state machine, telemetry) i
 pure and injected with fakes, so `pytest` is green without a GUI. See
 [ARCHITECTURE §7](docs/ARCHITECTURE.md#7-testing-strategy).
 
+## Troubleshooting
+
+Hard-won from the first live ride (2026-07-06):
+
+- **Wake word never fires / all scores 0.000** — an incompatible **onnxruntime**
+  silently breaks openWakeWord (features compute, classifier outputs 0 on *everything*,
+  even known-positive clips). Pinned to `>=1.16,<1.19`; if it regresses, verify with
+  `pip show onnxruntime`. Debug with `CHOTU_WAKE_DEBUG=1 python -m chotu` → watch
+  `~/Library/Logs/hey-claude/wake-debug.log` for the `max_score` heartbeat.
+- **Silent mic (peak ~64)** — the process lacks Microphone permission (separate from
+  the extension's). Run `python -m chotu --mic-check`; grant Microphone to your
+  terminal / the venv python. On a **Mac mini there is no built-in mic** — a
+  Bluetooth headset is your only input.
+- **`overflow=True` / dropped audio** — bursty Bluetooth delivery; the callback+queue
+  capture handles it (heartbeat should show `overflows=0`, ~25 chunks/2s).
+- **Command word ends up in the sent prompt** — dictation writes "Okay. Send." with
+  punctuation; the token-based matcher strips it. If a new command word misfires,
+  check `box_pre_strip` in the telemetry.
+
 ## Layout
 
 ```
