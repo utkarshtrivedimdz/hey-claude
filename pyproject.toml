@@ -5,6 +5,10 @@ description = "Wake-word voice controller for driving Claude Code hands-free on 
 requires-python = ">=3.11"
 dependencies = [
     "openwakeword>=0.6.0",
+    # onnxruntime >= ~1.20 silently breaks openWakeWord 0.6.0 (classifier outputs
+    # 0.0 on all audio, even known-positive clips). Pin to a compatible range.
+    # Verified 2026-07-06: 1.18.1 scores known positives at 1.000; 1.27.0 → 0.000.
+    "onnxruntime>=1.16,<1.19",
     "sounddevice>=0.4.6",
     "numpy>=1.24",
     "pyobjc-framework-ApplicationServices>=10.0",
