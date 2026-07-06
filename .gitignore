@@ -5,3 +5,7 @@ venv/
 .env
 .DS_Store
 models/
+*.egg-info/
+.pytest_cache/
+build/
+dist/

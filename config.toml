@@ -1,0 +1,37 @@
+# hey-claude config (FR-5). All keys optional — omitted keys use defaults.
+
+[wake]
+phrase = "chotu"
+# Path to your trained openWakeWord model for "chotu" (see scripts/train_chotu.md).
+# Empty => fall back to a pretrained phrase so the daemon still runs end-to-end.
+model = ""
+pretrained_fallback = "hey_jarvis"
+threshold = 0.5
+log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
+# mic_device = 1       # sounddevice device index; omit for default input
+
+[commands]
+# Option A: command word is dictated into the box then stripped. A required prefix
+# disambiguates from a prompt that legitimately ends in a command word (Q11b).
+prefix = ["okay", "ok"]
+
+[commands.words]
+send   = ["send", "submit", "go", "enter"]
+cancel = ["cancel", "scratch that", "nevermind", "never mind"]
+stop   = ["stop", "interrupt", "abort"]
+
+[target]
+bundle_id    = "com.microsoft.VSCode"
+workspace    = "/Volumes/GeofastStorage/GitHub/geofast.code-workspace"
+title_substr = "geofast (Workspace)"
+
+[timeouts]
+arm_s = 8.0            # max time armed before auto-disarm
+disarm_s = 10.0        # silence-while-dictating → disarm (never auto-sends)
+correction_window_ms = 5000
+
+[telemetry]
+enabled = true
+retention_days = 30
+store_prompt_text = "full"   # full | hash | length_only | off
+log_dir = "~/Library/Logs/hey-claude"

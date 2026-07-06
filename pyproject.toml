@@ -1,0 +1,29 @@
+[project]
+name = "hey-claude"
+version = "0.1.0"
+description = "Wake-word voice controller for driving Claude Code hands-free on macOS"
+requires-python = ">=3.11"
+dependencies = [
+    "openwakeword>=0.6.0",
+    "sounddevice>=0.4.6",
+    "numpy>=1.24",
+    "pyobjc-framework-ApplicationServices>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+]
+
+[project.scripts]
+chotu = "chotu.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a live focused VS Code (skipped by default)",
+    "manual: run by a human at the keyboard",
+]
+addopts = "-m 'not integration and not manual'"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
