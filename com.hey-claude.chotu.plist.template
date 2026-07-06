@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Generated from this template by scripts/setup.sh (paths substituted). -->
+<!-- Generated from this template by scripts/setup.sh (paths substituted).
+     Runs an internal-disk launcher (launch-chotu.sh) that waits for the repo's
+     venv before starting chotu, so auto-start survives login even when the repo
+     + venv live on an external volume. No external path is referenced here. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -9,13 +12,9 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>__PYTHON__</string>
-        <string>-m</string>
-        <string>chotu</string>
+        <string>/bin/bash</string>
+        <string>__LAUNCHER__</string>
     </array>
-
-    <key>WorkingDirectory</key>
-    <string>__REPO__</string>
 
     <key>RunAtLoad</key>
     <true/>

@@ -5,6 +5,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$REPO/.venv/bin/python"
 LA="$HOME/Library/LaunchAgents/com.hey-claude.chotu.plist"
+LAUNCHER_DIR="$HOME/Library/Application Support/hey-claude"
+LAUNCHER="$LAUNCHER_DIR/launch-chotu.sh"
 
 echo "==> repo: $REPO"
 
@@ -20,9 +22,17 @@ echo "==> installing (this pulls openwakeword + pyobjc; may take a few minutes)"
 echo "==> log dir"
 mkdir -p "$HOME/Library/Logs/hey-claude"
 
+echo "==> generating internal launcher -> $LAUNCHER"
+# Lives on the internal disk so launchd can always start it at login; it waits for
+# the repo's venv (which may be on an external volume) before starting chotu.
+mkdir -p "$LAUNCHER_DIR"
+sed -e "s#__PYTHON__#$PY#g" -e "s#__REPO__#$REPO#g" \
+    "$REPO/launch-chotu.sh.template" > "$LAUNCHER"
+chmod +x "$LAUNCHER"
+
 echo "==> generating LaunchAgent -> $LA"
 mkdir -p "$HOME/Library/LaunchAgents"
-sed -e "s#__PYTHON__#$PY#g" -e "s#__REPO__#$REPO#g" -e "s#__HOME__#$HOME#g" \
+sed -e "s#__LAUNCHER__#$LAUNCHER#g" -e "s#__HOME__#$HOME#g" \
     "$REPO/com.hey-claude.chotu.plist.template" > "$LA"
 
 cat <<EOF

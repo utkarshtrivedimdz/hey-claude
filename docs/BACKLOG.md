@@ -50,9 +50,10 @@ Actionable task list (the aspirational roadmap lives in
 - [ ] **LaunchAgent as a signed `.app` bundle** for clean TCC identity — the
   raw-`python`-binary Mic/Accessibility grant for launchd is finicky. Only if the
   plain LaunchAgent grant misbehaves.
-- [ ] **Move repo + venv off the external volume** (`/Volumes/GeofastStorage`) or
-  document the dependency — the LaunchAgent can't start if the volume isn't mounted
-  at login.
+- [ ] **Move repo + venv off the external volume** (`/Volumes/GeofastStorage`) —
+  now *mitigated* (not fixed) by the internal launcher, which waits up to 5 min for
+  the volume to mount before starting chotu. Moving to internal disk would remove the
+  wait + the "drive unplugged = never runs" failure mode entirely. Lower priority now.
 - [ ] **Re-register the AXObserver on focus** each turn (a sent message re-renders the
   panel; within-a-turn is stable — verified). Harden for multi-turn sessions. (Q12)
 - [ ] **Log wake-window audio (redacted) for retraining** — feed real voice+mic
@@ -71,6 +72,13 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Done (shipped in v1)
 
+- [x] **Auto-start at login via LaunchAgent + internal launcher.** Shipped 2026-07-06.
+  `setup.sh` installs a launcher on the internal disk (`~/Library/Application
+  Support/hey-claude/launch-chotu.sh`) and a `RunAtLoad`/`KeepAlive` LaunchAgent that
+  runs it; the launcher waits for the repo's venv before starting chotu, so login
+  survives the boot mount-race even with the repo on an external USB volume. Verified:
+  mic stream opens + `focus_gate=pass` under launchd (Accessibility + Microphone carry
+  over). Templates: `launch-chotu.sh.template`, `com.hey-claude.chotu.plist.template`.
 - [x] **Dictation fixups (substitution map).** Requested + shipped 2026-07-06 —
   `[fixups]` table in `config.toml` maps mishearings → corrections (case-insensitive,
   whole-word, longest key wins). Applied to the prompt after command strip, before
