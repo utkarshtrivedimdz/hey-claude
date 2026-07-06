@@ -38,7 +38,9 @@ class Bootstrap:
         self._ready_timeout = ready_timeout_s
 
     def _title_active(self) -> bool:
-        return self.cfg.target_title_substr in (self.system.window_title() or "")
+        sub = self.cfg.target_title_substr
+        # empty substring would match any window → fail closed until the target is configured.
+        return bool(sub) and sub in (self.system.window_title() or "")
 
     def _focus_ok(self) -> bool:
         return (

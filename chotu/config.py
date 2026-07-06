@@ -64,8 +64,8 @@ class Config:
 
     # target (focus-safety gate)
     target_bundle_id: str = "com.microsoft.VSCode"
-    target_workspace: str = "/Volumes/GeofastStorage/GitHub/geofast.code-workspace"
-    target_title_substr: str = "geofast (Workspace)"
+    target_workspace: str = ""          # absolute path to your .code-workspace (set in config.toml)
+    target_title_substr: str = ""       # substring of the target window title; empty => focus gate fails closed
 
     keymap: dict = field(default_factory=_default_keymap)
 

@@ -34,9 +34,12 @@ clot = "Claude"
 clod = "Claude"
 
 [target]
+# The VS Code window chotu is allowed to type into (focus-safety gate). Set these to
+# YOUR target. Keep your real values in ~/.config/hey-claude/config.toml — it is loaded
+# before this file, so this tracked copy stays a generic example.
 bundle_id    = "com.microsoft.VSCode"
-workspace    = "/Volumes/GeofastStorage/GitHub/geofast.code-workspace"
-title_substr = "geofast (Workspace)"
+workspace    = "/path/to/your-project.code-workspace"   # absolute path to your .code-workspace
+title_substr = "your-project (Workspace)"               # a substring unique to that window's title
 
 [timeouts]
 arm_s = 8.0            # max time armed before auto-disarm
