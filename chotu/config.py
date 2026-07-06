@@ -41,6 +41,10 @@ class Config:
     wake_phrase: str = "chotu"
     wake_model: str = ""                       # path to trained chotu.onnx; empty => fallback
     wake_pretrained_fallback: str = "hey_jarvis"
+    # onnx is REQUIRED on macOS: tflite_runtime has no arm64 wheels, and openWakeWord's
+    # default 'tflite' framework silently zeroes the melspec/embedding preprocessor when
+    # the runtime is missing → all scores 0.0. Verified 2026-07-06.
+    wake_inference_framework: str = "onnx"
     wake_threshold: float = 0.5
     wake_log_floor: float = 0.3                # log near-miss scores >= this (threshold tuning)
     mic_device: Optional[Any] = None
@@ -94,6 +98,7 @@ def load(path: Optional[str] = None) -> Config:
     cfg.wake_phrase = wake.get("phrase", cfg.wake_phrase)
     cfg.wake_model = wake.get("model", cfg.wake_model)
     cfg.wake_pretrained_fallback = wake.get("pretrained_fallback", cfg.wake_pretrained_fallback)
+    cfg.wake_inference_framework = wake.get("framework", cfg.wake_inference_framework)
     cfg.wake_threshold = float(wake.get("threshold", cfg.wake_threshold))
     cfg.wake_log_floor = float(wake.get("log_floor", cfg.wake_log_floor))
     cfg.mic_device = wake.get("mic_device", cfg.mic_device)

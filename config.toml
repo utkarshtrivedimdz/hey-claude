@@ -6,6 +6,9 @@ phrase = "chotu"
 # Empty => fall back to a pretrained phrase so the daemon still runs end-to-end.
 model = ""
 pretrained_fallback = "hey_jarvis"
+# onnx is required on macOS (tflite_runtime has no arm64 wheels; the default 'tflite'
+# framework silently zeroes the preprocessor → all scores 0.0).
+framework = "onnx"
 threshold = 0.5
 log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
 # mic_device = 1       # sounddevice device index; omit for default input
