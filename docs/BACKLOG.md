@@ -50,11 +50,26 @@ Actionable task list (the aspirational roadmap lives in
 
 ## UX
 
-- [ ] **Menu-bar state indicator** (idle / armed / dictating). It's headless now, so
-  there's no visual cue that it armed. Biggest quality-of-life upgrade. (§10)
+- [~] **Menu-bar state indicator** (idle / armed / dictating) — **descoped 2026-07-06.**
+  The VS Code Voice-dictation button already IS the indicator: chotu drives + observes it
+  (AXPress + AXTitleChanged is the DICTATING ground truth), so blue = listening, off = not.
+  That's the same signal a menu-bar dot would show, and the user confirms it's sufficient.
+  Only revisit if we go **desktop-wide** (no VS Code button visible in other apps). (§10)
 - [ ] **Spoken readback / confirm** before send, for fully eyes-free use. (§10)
 
 ## Robustness / ops
+
+- [ ] **Recover from mic device loss (Bluetooth drop silently deafens chotu).**
+  Hit 2026-07-06: disconnecting the OnePlus Buds mid-session left the daemon alive
+  but deaf — the wake stream is opened once at startup bound to `device=None` (the
+  default input *at that time*); when that device disappears PortAudio delivers
+  silence and no callbacks, with **no error logged**, so chotu looks running but hears
+  nothing until a manual restart. Fix: watch the PortAudio stream status / a
+  device-change notification and either (a) re-open the stream on the new default
+  input, or (b) raise/exit so launchd `KeepAlive` restarts on a live device. At
+  minimum, log the stall (e.g. N seconds of zero callbacks) instead of failing silent.
+  Note the Mac Mini has no built-in mic, so on a drop there may be *no* usable input
+  until the Buds/USB mic reconnect — the re-open must retry, not exit-loop.
 
 - [ ] **LaunchAgent as a signed `.app` bundle** for clean TCC identity — the
   raw-`python`-binary Mic/Accessibility grant for launchd is finicky. Only if the
