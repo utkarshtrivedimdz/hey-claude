@@ -13,6 +13,14 @@ threshold = 0.5
 log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
 # mic_device = 1       # sounddevice device index; omit for default input
 
+[dictation]
+# chotu starts/stops dictation by AXPress-ing the Claude panel's Voice-dictation button
+# (NOT Cmd+D — that collided with VS Code's multi-cursor shortcut). The button's
+# AXDescription is the ground truth for whether recording is on; an AXObserver on it
+# drives the DICTATING state event-driven. Override only if the extension renames it.
+button_desc_off = "Voice dictation"   # AXDescription when OFF
+button_desc_on  = "Stop recording"    # AXDescription when ON (blue/recording)
+
 [commands]
 # Option A: command word is dictated into the box then stripped. A required prefix
 # disambiguates from a prompt that legitimately ends in a command word (Q11b).
@@ -42,10 +50,10 @@ workspace    = "/path/to/your-project.code-workspace"   # absolute path to your 
 title_substr = "your-project (Workspace)"               # a substring unique to that window's title
 
 [timeouts]
-arm_s = 8.0            # max time armed before auto-disarm
-disarm_s = 22.0        # silence-while-dictating → disarm (never auto-sends). Resets on every box
-                       # change, so this is pause-tolerance, not a total cap. Bumped 10→22 to
-                       # survive mid-prompt thinking pauses; real fix is the VAD off-ramp (BACKLOG).
+arm_s = 8.0            # max time ARMED (dictation requested) before auto-disarm if the button
+                       # never turns on. There is deliberately NO silence/disarm timeout while
+                       # DICTATING — the Voice-dictation button is the sole authority; a turn ends
+                       # on a command word or a button-off event (OS/user turning the mic off).
 correction_window_ms = 5000
 
 [telemetry]

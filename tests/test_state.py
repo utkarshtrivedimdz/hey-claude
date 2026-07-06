@@ -8,16 +8,17 @@ from chotu.bootstrap import BootstrapResult
 from tests.fakes import FakeClock, FakeKeys, FakeAX, FakeBootstrap, FakeTelemetry
 
 
-def make(boot=None, disarm=10.0, fixups=None):
+def make(boot=None, fixups=None, ax=None, beeps=None):
     cfg = Config()
     cfg.command_prefix = ["okay"]
-    cfg.disarm_timeout_s = disarm
     clock = FakeClock()
-    keys, ax, tel = FakeKeys(), FakeAX(), FakeTelemetry()
+    keys, tel = FakeKeys(), FakeTelemetry()
+    ax = ax if ax is not None else FakeAX()
     boot = boot or FakeBootstrap()
+    beep = (lambda k: beeps.append(k)) if beeps is not None else (lambda k: None)
     # strict=True so an illegal transition is a hard failure in tests (prod only logs).
     sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel,
-                      monotonic=clock.now, fixups=fixups, strict=True)
+                      monotonic=clock.now, fixups=fixups, strict=True, beep=beep)
     return sm, cfg, clock, keys, ax, tel, boot
 
 
@@ -25,15 +26,16 @@ def test_happy_send_strips_command_and_submits():
     sm, cfg, clock, keys, ax, tel, boot = make()
     sm.on_wake(0.9)
     assert sm.state is S.DICTATING
-    assert keys.names()[:2] == ["cmd_esc", "cmd_d"]   # focus then dictate
-    assert ax.observing
+    assert keys.names() == ["cmd_esc"]                # focus box; dictation is AXPress, not a key
+    assert "press_dictation" in ax.ops               # started dictation via the button
+    assert ax.box_observing
 
     ax.feed("hi okay send")                           # dictation transcribes prompt+cmd
     assert sm.state is S.IDLE
     # stop dictation, strip " okay send" (10), submit
     assert ("backspace", 10) in keys.ops
     assert keys.names()[-2:] == ["backspace", "ret"]
-    assert not ax.observing
+    assert not ax.box_observing
     assert tel.turns[-1]["outcome"] == "sent"
     assert tel.turns[-1]["command"] == "send"
     assert tel.turns[-1]["box_post"] == "hi"
@@ -48,14 +50,16 @@ def test_self_trigger_ignored_while_dictating():
     assert boot.calls == 1                            # not re-armed
 
 
-def test_disarm_on_silence_never_sends():
-    sm, cfg, clock, keys, ax, tel, boot = make(disarm=5.0)
+def test_no_silence_timeout_keeps_dictating():
+    # The button is the sole authority: silence does NOT disarm — a turn ends only on a
+    # command word or a button-off event. So ticking far past any old timeout is a no-op.
+    sm, cfg, clock, keys, ax, tel, boot = make()
     sm.on_wake(0.9)
-    clock.advance(6.0)
+    assert sm.state is S.DICTATING
+    clock.advance(600.0)
     sm.tick()
-    assert sm.state is S.IDLE
-    assert "ret" not in keys.names()                  # cancel-safe: never auto-sends
-    assert tel.turns[-1]["outcome"] == "timeout"
+    assert sm.state is S.DICTATING                     # still dictating; no silence disarm
+    assert not any(o == "press_dictation" for o in ax.ops[1:])  # button not toggled off
 
 
 def test_cancel_clears_and_does_not_submit():
@@ -74,6 +78,36 @@ def test_bootstrap_failure_aborts_before_keystrokes():
     assert sm.state is S.IDLE
     assert keys.ops == []                             # no keys fired into the wrong app
     assert tel.turns[-1]["outcome"] == "error"
+
+
+def test_external_mic_off_disarms_with_dropped_beep():
+    # Button is ground truth: if it goes off mid-turn (user clicks mic), chotu disarms.
+    beeps: list = []
+    sm, cfg, clock, keys, ax, tel, boot = make(beeps=beeps)
+    sm.on_wake(0.9)
+    assert sm.state is S.DICTATING
+    ax.feed_dictation(False)                          # external toggle off
+    assert sm.state is S.IDLE
+    assert "ret" not in keys.names()                  # never auto-sends
+    assert beeps[-1] == "dropped"                     # audible external-drop feedback (option b)
+    assert tel.turns[-1]["outcome"] == "dictation_dropped"
+
+
+def test_dictation_button_missing_aborts_loud():
+    sm, cfg, clock, keys, ax, tel, boot = make(ax=FakeAX(button_present=False))
+    sm.on_wake(0.9)
+    assert sm.state is S.IDLE
+    assert not ax.box_observing
+    assert "ret" not in keys.names()                  # never sends
+    assert tel.turns[-1]["outcome"] == "error"
+
+
+def test_dictation_already_on_enters_dictating_without_pressing():
+    sm, cfg, clock, keys, ax, tel, boot = make(ax=FakeAX(dict_on=True))
+    sm.on_wake(0.9)
+    assert sm.state is S.DICTATING
+    assert "press_dictation" not in ax.ops            # already recording → no toggle
+    assert ax.box_observing
 
 
 def test_rejected_wake_below_threshold_does_nothing():
@@ -173,15 +207,17 @@ def test_happy_send_emits_legal_transition_sequence():
     assert all(t["illegal"] is False for t in tel.transitions)
 
 
-def test_disarm_emits_silence_timeout_transition():
-    sm, cfg, clock, keys, ax, tel, boot = make(disarm=5.0)
+def test_arm_timeout_disarms_when_button_never_turns_on():
+    # Button press produced no on-event → the ARMED backstop disarms (the only tick timeout left).
+    ax = FakeAX()
+    ax.press_dictation = lambda: ax.ops.append("press_dictation")  # press, but fire no event
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
     sm.on_wake(0.9)
-    clock.advance(6.0)
+    assert sm.state is S.ARMED                          # stuck armed: no button-on event arrived
+    clock.advance(cfg.arm_timeout_s + 1.0)
     sm.tick()
-    assert tel.transitions[-1] == {
-        "frm": "dictating", "to": "idle", "reason": "silence_timeout",
-        "mono": clock.now(), "illegal": False,
-    }
+    assert sm.state is S.IDLE
+    assert tel.transitions[-1]["reason"] == "arm_timeout"
 
 
 def test_bootstrap_failure_emits_armed_then_idle():

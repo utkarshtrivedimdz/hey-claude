@@ -1,8 +1,9 @@
 """Keystroke injection (KeysPort impl) via osascript System Events.
 
 Verified 2026-07-06: type + backspace + Return land in the box (AX writes don't
-persist, so keystrokes are the write path). Cmd+D=key 2, Esc/Cmd+Esc=key 53,
-Return=key 36, Delete/backspace=key 51.
+persist, so keystrokes are the write path). Esc/Cmd+Esc=key 53, Return=key 36,
+Delete/backspace=key 51. (Dictation is NOT a keystroke — it's an AXPress on the
+Voice-dictation button; see chotu/ax.py and DICTATION-AX-PLAN.md.)
 """
 from __future__ import annotations
 
@@ -27,10 +28,6 @@ class RealKeys:
     def _key(self, code: int, cmd: bool = False) -> None:
         mod = " using command down" if cmd else ""
         _osa(f'tell application "System Events" to key code {code}{mod}')
-
-    def cmd_d(self) -> None:
-        log.debug("key: Cmd+D (dictation toggle)")
-        self._key(self.k["cmd_d"], cmd=True)
 
     def cmd_esc(self) -> None:
         log.debug("key: Cmd+Esc (focus Claude input)")

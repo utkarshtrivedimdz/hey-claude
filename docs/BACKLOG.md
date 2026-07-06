@@ -26,14 +26,12 @@ Actionable task list (the aspirational roadmap lives in
   (AXValue is broad, but not every app exposes an editable `AXTextArea`). Big scope
   item — likely its own design doc + ADR before it spreads.
 
-- [ ] **VAD-based off-ramp instead of a fixed silence timeout.** Today disarm is a
-  timer that resets on every box change (`disarm_s`) — already activity-driven, but it
-  can't tell "pausing to think mid-prompt" from "walked away," so a long silent pause
-  still disarms and sends time out. openWakeWord bundles `silero_vad`; run it on the
-  mic to keep the session armed while there's *voice activity* (even between dictation
-  updates) and only start the off-ramp countdown once the user actually stops speaking.
-  Keep a hard max-arm ceiling as a safety backstop — a false wake must still auto-clear.
-  Directly attacks the send-timeout problem without relying on an ever-longer timer.
+- [x] **Silence timeout replaced by button-driven off-ramp.** Done 2026-07-06 (see
+  DICTATION-AX-PLAN.md). The fixed `disarm_s` silence timer is gone: the Voice-dictation
+  button's AXTitleChanged event is the ground truth, so a turn ends on a command word or a
+  button-off event (OS/user turning the mic off), never a pause timer. A long think-pause
+  no longer disarms. (A VAD off-ramp is no longer needed for this; the `arm_s` ceiling
+  still backstops a false wake that never turns the button on.)
 
 - [ ] **Press-by-name via AXPress.** Verified 2026-07-06: when a tab is active,
   Claude Code's question dialogs expose their options as `AXRadioButton` and the
@@ -44,8 +42,10 @@ Actionable task list (the aspirational roadmap lives in
   choice/permission dialogs and hitting panel buttons entirely by voice.
   - **Constraint:** only the ACTIVE tab is in the AX tree — a dialog in a background
     tab is invisible; the command must focus that tab first (or fail with a cue).
-  - **Bonus:** `AXPress` the `Voice dictation` button instead of `Cmd+D` — avoids the
-    VS Code multi-cursor collision; more robust dictation start.
+  - **Bonus — DONE 2026-07-06:** dictation now `AXPress`es the `Voice dictation` button
+    instead of `Cmd+D` (killed the multi-cursor collision) and reads its AXDescription /
+    AXTitleChanged as ground truth. The reusable `_find_element` finder in `chotu/ax.py`
+    is ready for the press-by-name commands above. See DICTATION-AX-PLAN.md.
 - [ ] Keystroke fallback for widgets that don't expose `AXPress` (↑/↓ + Enter, Esc).
 
 ## UX

@@ -41,8 +41,9 @@ class Actions:
 
     def perform(self, m, text: str) -> ActionOutcome:
         """Execute matched command `m` (box text `text`). Stops dictation first."""
-        self.ax.stop_observing()
-        self.keys.cmd_d()  # stop dictation → frees the mic before we touch the box
+        self.ax.stop_observing_box()  # our own keystrokes must not re-trigger command match
+        if self.ax.dictation_on():
+            self.ax.press_dictation()  # stop dictation → frees the mic before we touch the box
 
         if m.action == "send":
             return self._send(m)

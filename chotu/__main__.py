@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 _SOUNDS = {
     "armed": "Tink", "send": "Pop", "cancel": "Bottle",
     "stop": "Funk", "error": "Basso",
+    "listening": "Glass",   # dictation verified ON (button turned blue)
+    "dropped": "Sosumi",    # dictation turned OFF externally mid-turn (mic clicked off)
 }
 
 
@@ -53,7 +55,7 @@ def _build(cfg):
     from .bootstrap import Bootstrap
 
     system = RealSystem(cfg)
-    ax = RealAX(cfg.target_bundle_id)
+    ax = RealAX(cfg)
     keys = RealKeys(cfg.keymap)
     boot = Bootstrap(system, cfg)
     tel = Telemetry(cfg)

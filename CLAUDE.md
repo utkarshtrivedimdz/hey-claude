@@ -17,8 +17,8 @@ the outside world.
 | [`chotu/bootstrap.py`](chotu/bootstrap.py) | launch/open/raise VS Code + focus-safety gate over a `SystemPort`. | **pure** |
 | [`chotu/telemetry.py`](chotu/telemetry.py) | append-only JSONL tuning events (redactable). | **pure** |
 | [`chotu/config.py`](chotu/config.py) | `config.toml` → `Config` dataclass, with defaults + validation. | **pure** |
-| [`chotu/ax.py`](chotu/ax.py) | Accessibility: read box, `AXObserver` on `AXValueChanged`. | pyobjc |
-| [`chotu/keys.py`](chotu/keys.py) | keystroke injection via `osascript`. | osascript |
+| [`chotu/ax.py`](chotu/ax.py) | Accessibility: read box (`AXObserver` on `AXValueChanged`); drive + observe the Voice-dictation button (`AXPress` + `AXTitleChanged` = dictation ground truth). | pyobjc |
+| [`chotu/keys.py`](chotu/keys.py) | keystroke injection via `osascript` (Esc/type/⌫/⏎; **not** dictation — that's an AXPress). | osascript |
 | [`chotu/system.py`](chotu/system.py) | frontmost / launch / raise / window title. | pyobjc |
 | [`chotu/wake.py`](chotu/wake.py) | openWakeWord listener on its own thread. | audio |
 | [`chotu/log.py`](chotu/log.py) | human-readable debug stream (stdlib `logging`). | — |

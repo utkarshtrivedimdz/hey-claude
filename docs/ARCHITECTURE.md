@@ -38,7 +38,8 @@ graph TD
   SM --> KEYS
   BS --> SYS
   AX <-->|"AXValue / AXObserver<br/>(needs AXManualAccessibility)"| VSC
-  KEYS -->|"Cmd+D/Esc, type, ⌫, ⏎"| VSC
+  KEYS -->|"Cmd+Esc, type, ⌫, ⏎"| VSC
+  AX -->|"AXPress Voice-dictation button"| VSC
   SYS -->|"NSWorkspace: launch / raise / frontmost"| VSC
   CFG -.-> W
   CFG -.-> SM
@@ -88,14 +89,15 @@ classDiagram
   }
   class AX {
     +read_box() str
-    +start_observing(on_change) bool
-    +stop_observing()
+    +observe_box(on_change) bool
+    +stop_observing_box()
     +set_manual_a11y()
-    +read_button_state() live|idle|unknown
-    +reregister_on_focus()
+    +dictation_on() bool?
+    +press_dictation()
+    +observe_dictation(on_change) bool
+    +stop_observing_dictation()
   }
   class Keys {
-    +cmd_d()
     +cmd_esc()
     +esc()
     +type_text(s)
@@ -177,24 +179,24 @@ sequenceDiagram
   BS->>VS: system.py: launch / open / raise
   BS->>BS: _focus_ok()? bundle+title
   SM->>K: Cmd+Esc (focus Claude input)
-  SM->>K: Cmd+D (start dictation)
-  Note over SM: armed → dictating (wake now ignored)
-  SM->>AX: start_observing(on_change)
+  SM->>AX: dictation_on()? + observe_dictation(on_change)
+  SM->>AX: press_dictation() (AXPress the button)
+  Note over SM: still armed — awaiting the button-on event
+  AX->>VS: AXObserver(AXTitleChanged) on the button
+  VS-->>AX: title → "Stop recording" (blue)
+  AX-->>SM: on_dictation_change(is_on=True)
+  Note over SM: armed → dictating (ground truth; wake now ignored)
+  SM->>AX: observe_box(on_change)
   AX->>VS: AXObserver(AXValueChanged)
-  AX->>VS: locate + cache Voice-dictation button «Phase 5»
   U->>VS: "add retry loop. okay send"
   loop each transcription chunk
     VS-->>AX: value changed
     AX-->>SM: on_box_change(text)
     SM->>SM: trailing token a command? prefix ok?
   end
-  loop every tick — liveness gate «Phase 5»
-    SM->>AX: read_button_state()
-    AX-->>SM: recording (blue) → keep armed, no countdown
-    Note over SM: grey → OS ended dictation → DISARM (never sends)<br/>unreadable → fall back to silence timer
-  end
+  Note over SM: OR button turns off (OS/user) → on_dictation_change(False) → DISARM (dropped beep, never sends)
   Note over SM: "okay send" matched → dictating → acting → Actions.perform
-  SM->>K: Cmd+D (stop dictation)
+  SM->>AX: press_dictation() (stop dictation)
   SM->>K: backspace × len("okay send")
   SM->>K: Return
   SM->>T: log_turn(sent, latency, pre/post-strip)
@@ -223,18 +225,16 @@ sequenceDiagram
 
 ## 4. State machine (FR-6)
 
-**Liveness signal:** while `dictating`, chotu tracks VS Code's own **Voice-dictation
-button** state (its `AXDescription` flips `Voice dictation` ⇄ `Stop recording`; a
-`recording_*` DOM class appears — both verified readable over AX, 2026-07-06). The
-button is the OS dictation session's ground truth, so it — not a fixed clock — decides
-when the session is still live. Blue ⇒ stay armed through thinking pauses; grey ⇒ the
-OS ended dictation ⇒ off-ramp. The `disarm_s` silence timer and a hard `max_arm`
-ceiling remain only as a **fallback backstop** (button unreadable — e.g. user tabbed
-away — or a stale matcher after an extension update). Status: capability verified;
-wiring into `tick()` is [`HARDENING-PLAN.md`](HARDENING-PLAN.md) **Phase 5**. Until it
-lands, `tick()` runs the silence/arm timeouts only — the button edges below are marked
-**«Phase 5»**. The `acting` state is **built** (Phase 2): a command match routes
-`dictating → acting → idle`, with `Actions.perform` doing the dispatch.
+**Liveness signal (BUILT 2026-07-06 — see DICTATION-AX-PLAN.md):** while `dictating`,
+VS Code's own **Voice-dictation button** is the ground truth. Its `AXDescription` flips
+`Voice dictation` ⇄ `Stop recording` (a `recording_*` DOM class appears) and it emits
+**`AXTitleChanged`** on every toggle, so a second `AXObserver` on it drives the DICTATING
+edges event-driven — no polling. `armed → dictating` fires only on a button-on event;
+`dictating → idle` fires on a button-off event (OS/user turning the mic off → the "dropped"
+beep, never sends). There is **no silence/disarm timer** — a thinking pause keeps the button
+blue and the turn alive. The only `tick()` timeout left is the `arm_s` backstop (the button
+never turned on after the AXPress). The `acting` state is **built** (Phase 2): a command
+match routes `dictating → acting → idle`, with `Actions.perform` doing the dispatch.
 
 ```mermaid
 stateDiagram-v2

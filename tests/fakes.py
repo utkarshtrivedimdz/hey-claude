@@ -19,7 +19,6 @@ class FakeKeys:
     def __init__(self):
         self.ops: list = []
 
-    def cmd_d(self): self.ops.append(("cmd_d",))
     def cmd_esc(self): self.ops.append(("cmd_esc",))
     def esc(self): self.ops.append(("esc",))
     def type_text(self, s): self.ops.append(("type", s))
@@ -32,27 +31,71 @@ class FakeKeys:
 
 
 class FakeAX:
-    def __init__(self, value: str = ""):
+    """Fakes the box textarea observer AND the dictation button (ground truth).
+
+    `press_dictation` flips the button and, while observing, fires the dictation
+    callback — simulating the real AXTitleChanged event. `feed_dictation` simulates
+    an EXTERNAL toggle (user clicks the mic). `button_present=False` makes
+    `dictation_on` return None (the fail-loud path).
+    """
+
+    def __init__(self, value: str = "", dict_on: bool = False, button_present: bool = True):
         self.value = value
-        self.observing = False
-        self._cb = None
+        self.box_observing = False
+        self._box_cb = None
+        self._dict_on = dict_on
+        self.dict_observing = False
+        self._dict_cb = None
+        self.button_present = button_present
+        self.ops: list = []   # dictation ops (press_dictation)
 
     def set_manual_a11y(self): pass
     def read_box(self): return self.value
 
-    def start_observing(self, on_change):
-        self.observing = True
-        self._cb = on_change
+    # box textarea observer
+    def observe_box(self, on_change):
+        self.box_observing = True
+        self._box_cb = on_change
         return True
 
-    def stop_observing(self):
-        self.observing = False
+    def stop_observing_box(self):
+        self.box_observing = False
+        self._box_cb = None
 
     def feed(self, text: str):
-        """Simulate a value-changed event (call the observer callback)."""
+        """Simulate a box value-changed event (call the box observer callback)."""
         self.value = text
-        if self.observing and self._cb:
-            self._cb(text)
+        if self.box_observing and self._box_cb:
+            self._box_cb(text)
+
+    # dictation button (ground truth)
+    def dictation_on(self):
+        return None if not self.button_present else self._dict_on
+
+    def press_dictation(self):
+        self.ops.append("press_dictation")
+        if not self.button_present:
+            return
+        self._dict_on = not self._dict_on
+        if self.dict_observing and self._dict_cb:   # simulate the AXTitleChanged event
+            self._dict_cb(self._dict_on)
+
+    def observe_dictation(self, on_change):
+        if not self.button_present:
+            return False
+        self.dict_observing = True
+        self._dict_cb = on_change
+        return True
+
+    def stop_observing_dictation(self):
+        self.dict_observing = False
+        self._dict_cb = None
+
+    def feed_dictation(self, is_on: bool):
+        """Simulate an EXTERNAL button toggle (user clicks the mic on/off)."""
+        self._dict_on = is_on
+        if self.dict_observing and self._dict_cb:
+            self._dict_cb(is_on)
 
 
 class FakeBootstrap:

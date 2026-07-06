@@ -23,24 +23,25 @@ def _match(text, **over):
     return m
 
 
-def make(fixups=None):
-    keys, ax = FakeKeys(), FakeAX()
+def make(fixups=None, dict_on=False):
+    keys, ax = FakeKeys(), FakeAX(dict_on=dict_on)
     return Actions(keys, ax, fixups), keys, ax
 
 
 def test_perform_stops_observing_and_dictation_first():
-    actions, keys, ax = make()
-    ax.observing = True
+    actions, keys, ax = make(dict_on=True)
+    ax.box_observing = True
     out = actions.perform(_match("hi okay send"), "hi okay send")
-    assert not ax.observing                 # released the AX observer
-    assert keys.names()[0] == "cmd_d"       # stop dictation before touching the box
+    assert not ax.box_observing             # released the box observer
+    assert "press_dictation" in ax.ops      # stopped dictation (button) before touching the box
+    assert not ax.dictation_on()            # button toggled off
     assert isinstance(out, ActionOutcome)
 
 
 def test_send_fast_path_backspaces_and_returns():
     actions, keys, ax = make()
     out = actions.perform(_match("hi okay send"), "hi okay send")
-    assert keys.names() == ["cmd_d", "backspace", "ret"]
+    assert keys.names() == ["backspace", "ret"]
     assert ("backspace", 10) in keys.ops    # strips " okay send"
     assert out == ActionOutcome("sent", "send", strip=10, box_post="hi")
 
@@ -66,7 +67,7 @@ def test_send_without_matching_fixup_uses_fast_path():
 def test_empty_box_send_is_noop_abort():
     actions, keys, ax = make()
     out = actions.perform(_match("okay send"), "okay send")   # box is only the command
-    assert keys.names() == ["cmd_d"]        # dictation stopped; no send keystrokes
+    assert keys.names() == []                # no send keystrokes (dictation was already off)
     assert not any(o[0] in ("backspace", "ret", "type", "clear") for o in keys.ops)
     assert out == ActionOutcome("empty", "error", strip=0, box_post="")
 
@@ -82,7 +83,7 @@ def test_cancel_clears_box_and_does_not_return():
 def test_stop_sends_escape():
     actions, keys, ax = make()
     out = actions.perform(_match("okay stop"), "okay stop")
-    assert keys.names() == ["cmd_d", "esc"]
+    assert keys.names() == ["esc"]
     assert out.outcome == "stopped" and out.beep == "stop"
 
 

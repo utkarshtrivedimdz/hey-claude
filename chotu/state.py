@@ -68,7 +68,6 @@ class StateMachine:
         self.state = S.IDLE  # initial state — set directly; every later change goes via _transition
         self._wake_ts: Optional[float] = None
         self._arm_ts: Optional[float] = None
-        self._last_activity: Optional[float] = None
         self._boot: Optional[BootstrapResult] = None
         self._pending_wake: Optional[float] = None  # score of the accepted wake, awaiting resolution
         self._last_send: Optional[tuple] = None      # (turn_id, monotonic_ts)
@@ -106,49 +105,75 @@ class StateMachine:
             return
 
         self.keys.cmd_esc()   # focus Claude input
-        self.keys.cmd_d()     # start dictation
-        self._last_activity = self._mono()
-        self._transition(S.DICTATING, "dictation_started")
-        if not self.ax.start_observing(self.on_box_change):
-            log.error("AX start_observing failed — box changes won't be seen; "
-                      "turn will fall through to the silence backstop")
+        # The Voice-dictation button is the ground truth for the DICTATING state.
+        state = self.ax.dictation_on()
+        if state is None:
+            log.error("Voice-dictation button not found — aborting turn, no dictation")
+            self._beep("error")
+            self._resolve_wake(False)
+            self._log_turn("error", None, None, None, 0)
+            self._transition(S.IDLE, "dictation_button_missing")
+            return
+        self.ax.observe_dictation(self.on_dictation_change)  # watch the on/off (blue) event
+        if state:
+            self._enter_dictating()          # already recording → we are dictating now
         else:
-            log.info("dictation started (Cmd+Esc, Cmd+D) — observing box for command word")
+            self.ax.press_dictation()        # request ON; AXTitleChanged→on drives DICTATING
+            log.info("dictation requested (AXPress) — awaiting button-on event")
+
+    def on_dictation_change(self, is_on: bool) -> None:
+        """Ground-truth dictation state from the button's AXTitleChanged observer."""
+        if self.state is S.ARMED and is_on:
+            self._enter_dictating()
+        elif self.state is S.DICTATING and not is_on:
+            # user clicked the mic off (or macOS dropped it) → end the turn, never auto-send.
+            log.info("dictation button OFF externally — disarming (never auto-sends)")
+            self.ax.stop_observing_box()
+            self.ax.stop_observing_dictation()
+            self._beep("dropped")
+            self._resolve_wake(False)
+            self._log_turn("dictation_dropped", None, None, None, 0)
+            self._transition(S.IDLE, "button_off_external")
+        else:
+            log.debug("dictation change ignored (state=%s is_on=%s)", self.state.value, is_on)
 
     def on_box_change(self, text: str) -> None:
         if self.state is not S.DICTATING:
             log.debug("box change ignored — state=%s", self.state.value)
             return
         log.debug("box change (%d chars): %r", len(text or ""), text)
-        self._last_activity = self._mono()
         m = self.commands.match(text)
         if m is not None:
             log.info("command matched: %s (prefix=%s, strip=%d)", m.action, m.prefix, m.strip_len)
             self._act(m, text)
 
     def tick(self) -> None:
+        # No silence timeout while DICTATING: the button is the sole authority for the
+        # dictation lifetime. A turn ends only on a command word or a button-off event
+        # (the OS/user turning the mic off → AXTitleChanged → on_dictation_change). The
+        # arm-timeout below still backstops the ARMED gap (press produced no button-on event).
         now = self._mono()
-        if self.state is S.DICTATING and self._last_activity is not None:
-            idle = now - self._last_activity
-            if idle > self.cfg.disarm_timeout_s:
-                log.info("silence %.1fs > %.1fs — disarming (never auto-sends)",
-                         idle, self.cfg.disarm_timeout_s)
-                self.ax.stop_observing()
-                self.keys.cmd_d()  # stop dictation
-                self._beep("error")
-                self._resolve_wake(False)
-                self._log_turn("timeout", None, None, None, 0)
-                self._transition(S.IDLE, "silence_timeout")
-        elif self.state is S.ARMED and self._arm_ts is not None:
+        if self.state is S.ARMED and self._arm_ts is not None:
             armed = now - self._arm_ts
             if armed > self.cfg.arm_timeout_s:
                 log.warning("arm timeout %.1fs > %.1fs — dictation never started, disarming",
                             armed, self.cfg.arm_timeout_s)
+                self.ax.stop_observing_dictation()
                 self._beep("error")
                 self._resolve_wake(False)
                 self._transition(S.IDLE, "arm_timeout")
 
     # ---- internals -------------------------------------------------------
+    def _enter_dictating(self) -> None:
+        """Confirmed dictation ON (button = truth) → observe the box for command words."""
+        self._transition(S.DICTATING, "dictation_started")
+        self._beep("listening")
+        if not self.ax.observe_box(self.on_box_change):
+            log.error("observe_box failed — box changes won't be seen; "
+                      "turn will fall through to the silence backstop")
+        else:
+            log.info("dictation ON (button verified) — observing box for command word")
+
     def _act(self, m, text: str) -> None:
         """Sequence a matched command: ACTING → Actions.perform → telemetry → IDLE.
 
@@ -157,6 +182,7 @@ class StateMachine:
         cross-turn correction window.
         """
         self._transition(S.ACTING, f"match_{m.action}")
+        self.ax.stop_observing_dictation()  # we drive the mic-off now; not an external toggle
         out = self.actions.perform(m, text)
 
         self._beep(out.beep)

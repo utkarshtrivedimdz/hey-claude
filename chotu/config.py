@@ -31,8 +31,10 @@ def _default_placeholders() -> list:
 
 
 def _default_keymap() -> dict:
-    # macOS virtual key codes (verified: Cmd+D=2, Esc/Cmd+Esc=53, Return=36, Delete=51)
-    return {"cmd_d": 2, "cmd_esc": 53, "esc": 53, "ret": 36, "backspace": 51, "a": 0}
+    # macOS virtual key codes (verified: Esc/Cmd+Esc=53, Return=36, Delete=51)
+    # (Cmd+D removed — dictation is driven by AXPress on the Voice-dictation button, not a
+    #  keystroke, which collided with VS Code's multi-cursor shortcut. See DICTATION-AX-PLAN.)
+    return {"cmd_esc": 53, "esc": 53, "ret": 36, "backspace": 51, "a": 0}
 
 
 @dataclass
@@ -57,9 +59,15 @@ class Config:
     # dictation fixups: mishearing → correction (case-insensitive, whole-word)
     fixups: dict = field(default_factory=dict)
 
-    # timeouts / windows
+    # dictation button (ground truth): chotu AXPresses this VS Code panel button and reads
+    # its AXDescription to know if recording is on. See DICTATION-AX-PLAN.md.
+    dictation_button_desc_off: str = "Voice dictation"   # AXDescription when OFF
+    dictation_button_desc_on: str = "Stop recording"     # AXDescription when ON (blue)
+
+    # timeouts / windows. (No disarm/silence timeout: the Voice-dictation button is the
+    # sole authority for the dictation lifetime — a turn ends on a command word or a
+    # button-off event, never a silence timer. See DICTATION-AX-PLAN.md.)
     arm_timeout_s: float = 8.0
-    disarm_timeout_s: float = 10.0
     correction_window_ms: int = 5000
 
     # target (focus-safety gate)
@@ -84,6 +92,8 @@ class Config:
             raise ValueError(f"wake.threshold out of range: {self.wake_threshold}")
         if not isinstance(self.command_words, dict) or not self.command_words:
             raise ValueError("commands.words must be a non-empty table")
+        if not self.dictation_button_desc_off or not self.dictation_button_desc_on:
+            raise ValueError("dictation.button_desc_off/on must be non-empty")
         return self
 
 
@@ -113,9 +123,12 @@ def load(path: Optional[str] = None) -> Config:
 
     cfg.fixups = data.get("fixups", cfg.fixups)
 
+    dic = data.get("dictation", {})
+    cfg.dictation_button_desc_off = dic.get("button_desc_off", cfg.dictation_button_desc_off)
+    cfg.dictation_button_desc_on = dic.get("button_desc_on", cfg.dictation_button_desc_on)
+
     tmo = data.get("timeouts", {})
     cfg.arm_timeout_s = float(tmo.get("arm_s", cfg.arm_timeout_s))
-    cfg.disarm_timeout_s = float(tmo.get("disarm_s", cfg.disarm_timeout_s))
     cfg.correction_window_ms = int(tmo.get("correction_window_ms", cfg.correction_window_ms))
 
     tgt = data.get("target", {})
