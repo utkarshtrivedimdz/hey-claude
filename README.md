@@ -1,14 +1,13 @@
 # hey-claude 🎙️ → Claude Code
 
-Hands-free **voice control for the Claude Code VS Code extension** on macOS. Say the
-wake word (**"hey jarvis"** by default — see note below), dictate your prompt, and end
-with a spoken command ("okay send") — hey-claude focuses VS Code, drives the Claude input
-box, strips the command, and submits. Offline, single-user, personal; runs as a
-background LaunchAgent so it's always listening.
+**You're reading docs in your browser, an idea hits — just say "hey claude." It takes
+care of the rest.**
 
-> **Wake word:** the assistant is *hey-claude*, but the spoken trigger is currently
-> **"hey jarvis"** (openWakeWord's pretrained phrase). There's no pretrained "hey claude"
-> model — say "hey jarvis" until you [train a custom one](scripts/train-wake-word.md).
+From *any* app, anywhere on your Mac, the wake word pulls VS Code to the front, opens
+your workspace, focuses the Claude Code input, turns on the mic, types what you say, and
+submits it the moment you finish with "okay send." You never touch the keyboard, click
+into a box, or switch a window yourself — think out loud and it lands in Claude. Offline,
+single-user, always listening.[^wakeword]
 
 **Status:** v1 shipped and in daily use; hardening ongoing (see
 [`docs/BACKLOG.md`](docs/BACKLOG.md)). Design + verified integration points:
@@ -17,9 +16,9 @@ background LaunchAgent so it's always listening.
 
 ## Why hey-claude (vs. plain dictation / hotkey tools)
 
-- **Truly hands-free** — no hotkey, no clicking into a box. Say the wake word ("hey jarvis"
-  by default) from *any* app and it opens/raises VS Code, focuses the Claude input, and
-  starts the mic for you.
+- **Works from anywhere** — no hotkey, no clicking into a box, no window you have to be
+  in first. Say "hey claude" from *any* app — browser, terminal, Slack — and it raises VS
+  Code, focuses the Claude input, and starts the mic for you.
 - **Knows Claude's actions** — you speak "send", "cancel", "clear", "stop"; generic
   dictation can only type text, it can't submit, interrupt, or wipe the box.
 - **Won't send by accident** — it types your words but only *you* trigger the submit; a
@@ -32,8 +31,7 @@ background LaunchAgent so it's always listening.
 ## What it does
 
 - **Wake-word activation** — an always-listening [openWakeWord](https://github.com/dscripka/openWakeWord)
-  model arms on the wake word (the pretrained "hey jarvis" until you train a custom
-  "hey claude"). Nothing leaves the machine.
+  model arms on "hey claude".[^wakeword] Nothing leaves the machine.
 - **Focus safety** — on wake it launches/raises VS Code and opens your target
   `.code-workspace`, then *verifies* that window is frontmost before any keystroke — so
   it never types into an unrelated window. Works from any app (raises VS Code via
@@ -56,7 +54,7 @@ background LaunchAgent so it's always listening.
 ## How it works
 
 ```
-"hey jarvis"  →  launch/raise VS Code + open target workspace  →  verify frontmost (focus gate)
+"hey claude"  →  launch/raise VS Code + open target workspace  →  verify frontmost (focus gate)
          →  Cmd+Esc (focus Claude input) → AXPress the Voice-dictation button (start mic)
          →  you speak: "add a retry loop. okay send."
          →  hey-claude watches the box via AXObserver, sees the trailing "okay send"
@@ -202,3 +200,9 @@ scripts/    stats.py  setup.sh  train-wake-word.md  hey-claude-restart.sh
 tests/      unit suite + integration/
 docs/       REQUIREMENTS · ARCHITECTURE · BUILD-PLAN · HARDENING-PLAN · BACKLOG
 ```
+
+[^wakeword]: **On the wake word:** openWakeWord ships no "hey claude" model yet, so the
+    actual spoken trigger today is its closest pretrained phrase — **"hey jarvis"**. Say
+    "hey jarvis" until you [train a custom "hey claude"](scripts/train-wake-word.md) and
+    point `wake.model` at it; everything else works identically. (`wake.phrase` in
+    `config.toml` is just the display label.)
