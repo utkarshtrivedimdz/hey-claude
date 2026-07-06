@@ -39,20 +39,45 @@ class Actions:
         self.ax = ax
         self.fixups = fixups or Fixups()
 
+    def _trace(self, label: str) -> None:
+        """DISPATCH-TRACE: log the live box so we can see each keystroke's effect."""
+        try:
+            box = self.ax.read_box()
+        except Exception as e:  # never let tracing break a turn
+            box = f"<read_box error: {e!r}>"
+        log.info("DISPATCH-TRACE %s | box=%r", label, box)
+
     def perform(self, m, text: str) -> ActionOutcome:
-        """Execute matched command `m` (box text `text`). Stops dictation first."""
+        """Execute matched command `m` while dictation is still LIVE, then free the mic.
+
+        Critical: the dictated text only exists in the box while the mic is on — it's the
+        dictation session's interim buffer, not committed AXValue. Stopping the mic first
+        empties the box (the text only reappears when dictation restarts), so keystrokes
+        would hit nothing. So we strip/submit/clear on the live text FIRST, then turn the
+        mic off afterward.
+        """
+        log.info("DISPATCH-TRACE perform START action=%s strip_len=%s post_text=%r match_text=%r",
+                 m.action, m.strip_len, m.post_text, text)
         self.ax.stop_observing_box()  # our own keystrokes must not re-trigger command match
-        if self.ax.dictation_on():
-            self.ax.press_dictation()  # stop dictation → frees the mic before we touch the box
+        self._trace("after stop_observing_box (dictation still live)")
 
         if m.action == "send":
-            return self._send(m)
-        if m.action == "cancel":
+            out = self._send(m)
+        elif m.action == "cancel":
             self.keys.clear()
-            return ActionOutcome("cancelled", "cancel", strip=0, box_post=m.post_text)
-        # stop
-        self.keys.esc()
-        return ActionOutcome("stopped", "stop", strip=0, box_post=m.post_text)
+            self._trace("after cancel clear")
+            out = ActionOutcome("cancelled", "cancel", strip=0, box_post=m.post_text)
+        else:  # stop
+            self.keys.esc()
+            self._trace("after stop esc")
+            out = ActionOutcome("stopped", "stop", strip=0, box_post=m.post_text)
+
+        # Submitted / cleared on the live text — now free the mic. (Return usually ends
+        # dictation on its own, so this is typically a no-op guard.)
+        if self.ax.dictation_on():
+            self.ax.press_dictation()
+            self._trace("after mic off")
+        return out
 
     def _send(self, m) -> ActionOutcome:
         if not m.post_text.strip():
@@ -68,10 +93,14 @@ class Actions:
             log.info("fixup rewrite before send: %r → %r", m.post_text, corrected)
             self.keys.clear()
             self.keys.type_text(corrected)
+            self._trace("after fixup clear+type")
             self.keys.ret()
+            self._trace("after fixup Return")
             return ActionOutcome("sent", "send", strip=m.strip_len, box_post=corrected)
 
-        log.debug("send fast path: backspace %d + Return", m.strip_len)
+        log.info("DISPATCH-TRACE send fast path: backspace(%d) then Return", m.strip_len)
         self.keys.backspace(m.strip_len)
+        self._trace(f"after backspace({m.strip_len})")
         self.keys.ret()
+        self._trace("after Return (empty/placeholder ⇒ sent)")
         return ActionOutcome("sent", "send", strip=m.strip_len, box_post=m.post_text)

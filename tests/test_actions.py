@@ -28,13 +28,15 @@ def make(fixups=None, dict_on=False):
     return Actions(keys, ax, fixups), keys, ax
 
 
-def test_perform_stops_observing_and_dictation_first():
+def test_perform_acts_live_then_frees_mic():
+    # Act on the live dictated text first, THEN turn the mic off (text only exists in the
+    # box while the mic is on). So dictation is still on during the keystrokes, off after.
     actions, keys, ax = make(dict_on=True)
     ax.box_observing = True
     out = actions.perform(_match("hi okay send"), "hi okay send")
     assert not ax.box_observing             # released the box observer
-    assert "press_dictation" in ax.ops      # stopped dictation (button) before touching the box
-    assert not ax.dictation_on()            # button toggled off
+    assert "press_dictation" in ax.ops      # mic freed…
+    assert not ax.dictation_on()            # …so the button ends up off
     assert isinstance(out, ActionOutcome)
 
 

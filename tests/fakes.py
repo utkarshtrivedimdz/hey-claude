@@ -51,6 +51,7 @@ class FakeAX:
 
     def set_manual_a11y(self): pass
     def read_box(self): return self.value
+    def read_box_settled(self): return self.value
 
     # box textarea observer
     def observe_box(self, on_change):

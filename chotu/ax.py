@@ -176,6 +176,34 @@ class RealAX:
         log.warning("read_box: AXValue unreadable after 10 tries")
         return None
 
+    def read_box_settled(self, timeout_s: float = 1.5, poll_s: float = 0.1) -> Optional[str]:
+        """Read the box, waiting out the post-dictation refill race.
+
+        When dictation is stopped via the button, the box transiently EMPTIES and then the
+        finalized transcription re-commits a moment later (async). Acting during that empty
+        window silently drops the send (backspace/Return hit nothing). This polls read_box
+        until it's non-empty (not a placeholder) and stable across two consecutive reads, or
+        until timeout — so the caller only touches the box once the text has re-settled.
+        """
+        placeholders = self.cfg.placeholders or []
+
+        def is_empty(b) -> bool:
+            return (not b) or (b in placeholders)
+
+        prev = self.read_box()
+        waited = 0.0
+        while waited < timeout_s:
+            time.sleep(poll_s)
+            waited += poll_s
+            cur = self.read_box()
+            log.debug("read_box_settled: t=%.2f box=%r", waited, cur)
+            if not is_empty(cur) and cur == prev:
+                log.debug("read_box_settled: stable after %.2fs → %r", waited, cur)
+                return cur
+            prev = cur
+        log.warning("read_box_settled: not stable after %.1fs (last=%r)", timeout_s, prev)
+        return prev
+
     def observe_box(self, on_change: Callable[[str], None]) -> bool:
         fe, pid = self._focused_textarea()
         if fe is None or pid is None:
