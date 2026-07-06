@@ -167,7 +167,8 @@ def test_happy_send_emits_legal_transition_sequence():
     assert reasons == [
         ("idle", "armed", "wake_accepted"),
         ("armed", "dictating", "dictation_started"),
-        ("dictating", "idle", "dispatched_sent"),
+        ("dictating", "acting", "match_send"),   # Phase 2: ACTING extracts dispatch
+        ("acting", "idle", "dispatched_sent"),
     ]
     assert all(t["illegal"] is False for t in tel.transitions)
 

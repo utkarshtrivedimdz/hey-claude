@@ -54,8 +54,8 @@ graph TD
 
 `ax.py`, `keys.py`, and `system.py` are the only modules that touch VS Code —
 everything else is pure logic, which keeps the state machine and command logic
-unit-testable without a running editor. `state.py` owns the keystroke/AX dispatch
-today; Phase 2 extracts it into `actions.py` (still I/O-free-tested via ports).
+unit-testable without a running editor. The keystroke/AX dispatch lives in
+`actions.py` (Phase 2, built); `state.py` sequences turns and delegates to it.
 
 ---
 
@@ -76,7 +76,7 @@ classDiagram
     +on_box_change(text)
     +tick()
     -_transition(new, reason)
-    -_dispatch(match, text)
+    -_act(match, text)
   }
   class Actions {
     +perform(match, box_text) ActionOutcome
@@ -144,14 +144,14 @@ classDiagram
 ```
 
 **Not yet built** (target state — see [`HARDENING-PLAN.md`](HARDENING-PLAN.md)):
-- `class Actions` + `StateMachine..>Actions` — **Phase 2**. Today the dispatch/keystroke
-  choreography lives inline in `StateMachine._dispatch`; Phase 2 extracts it to `actions.py`.
 - `AX.read_button_state` — **Phase 5** (mic-button liveness signal).
 - `AX.reregister_on_focus` — **Phase 3** (stale-AX-ref recovery).
 - `StateMachine.tick()` today runs only the **backstop timeouts** (arm/silence); the
   liveness gate it will drive is **Phase 5**.
 
-`StateMachine._transition` and `Telemetry.log_transition` are **built** (Phase 1).
+**Built:** `StateMachine._transition` + `Telemetry.log_transition` (Phase 1);
+`class Actions` + `StateMachine..>Actions` — the keystroke/AX choreography now lives in
+`actions.py` (`Actions.perform`), delegated from `StateMachine._act` (Phase 2).
 
 ---
 
@@ -193,12 +193,12 @@ sequenceDiagram
     AX-->>SM: recording (blue) → keep armed, no countdown
     Note over SM: grey → OS ended dictation → DISARM (never sends)<br/>unreadable → fall back to silence timer
   end
-  Note over SM: "okay send" matched → dictating → acting «Phase 2»
+  Note over SM: "okay send" matched → dictating → acting → Actions.perform
   SM->>K: Cmd+D (stop dictation)
   SM->>K: backspace × len("okay send")
   SM->>K: Return
   SM->>T: log_turn(sent, latency, pre/post-strip)
-  Note over SM: acting → idle «Phase 2» (today: dictating → idle)
+  Note over SM: acting → idle (dispatch lives in actions.py, Phase 2)
 ```
 
 ## 3a. Runtime sequence — cancel / mis-fire (implicit feedback)
@@ -233,7 +233,8 @@ ceiling remain only as a **fallback backstop** (button unreadable — e.g. user 
 away — or a stale matcher after an extension update). Status: capability verified;
 wiring into `tick()` is [`HARDENING-PLAN.md`](HARDENING-PLAN.md) **Phase 5**. Until it
 lands, `tick()` runs the silence/arm timeouts only — the button edges below are marked
-**«Phase 5»**, and the `acting` state is **«Phase 2»**.
+**«Phase 5»**. The `acting` state is **built** (Phase 2): a command match routes
+`dictating → acting → idle`, with `Actions.perform` doing the dispatch.
 
 ```mermaid
 stateDiagram-v2
@@ -244,9 +245,8 @@ stateDiagram-v2
   dictating --> dictating: box value-changed (observe)
   dictating --> dictating: «Phase 5» mic button = recording (blue)<br/>session live — no countdown
   dictating --> idle: silence / arm-timeout backstop — DISARM, never sends
-  dictating --> idle: trailing command word → strip + dispatch (send / cancel / stop)
-  dictating --> acting: «Phase 2» command match (ACTING extracts dispatch)
-  acting --> idle: «Phase 2» Actions.perform → strip + dispatch
+  dictating --> acting: trailing command word (send / cancel / stop)
+  acting --> idle: Actions.perform → strip + dispatch, log_turn
   dictating --> idle: «Phase 5» mic button → idle / max-arm backstop
   note right of dictating
     liveness = Voice-dictation button state
@@ -278,8 +278,8 @@ flowchart TD
   L --> I["idle"]
 ```
 
-This flow is accurate to today's inline `StateMachine._dispatch`. **Phase 2** relocates
-the `STOP → dispatch → log_turn` subgraph into `actions.py` (`Actions.perform`); the flow
+The `STOP → dispatch → log_turn` subgraph lives in `actions.py` (`Actions.perform`,
+Phase 2), invoked from `StateMachine._act` once the machine is in `acting`; the flow
 itself is unchanged, only its home module.
 
 ---
@@ -463,7 +463,8 @@ def test_match_and_strip(text, prefix, cmd, post):
 Feed an event sequence, assert the state trajectory **and** the ops emitted to
 `FakeKeys`:
 - `[wake(0.7)]` → `armed`, bootstrap invoked.
-- `[wake, box("hi okay send")]` → `acting`; FakeKeys ops = `[Cmd+D, ⌫×N, Return]`.
+- `[wake, box("hi okay send")]` → `idle` (via transient `acting`); FakeKeys ops =
+  `[Cmd+D, ⌫×N, Return]`; transitions include `dictating→acting→idle`.
 - `[wake, wake]` (2nd during dictating) → still `dictating` (**self-trigger ignored**).
 - `[wake, tick(> silence_timeout)]` → `idle`, **no Return emitted** (never auto-sends).
 - `[wake, box("… okay cancel")]` → `idle`; ops include `Cmd+A,Delete`, **no Return**.

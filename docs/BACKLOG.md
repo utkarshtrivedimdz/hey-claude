@@ -92,8 +92,8 @@ Actionable task list (the aspirational roadmap lives in
   `[fixups]` table in `config.toml` maps mishearings → corrections (case-insensitive,
   whole-word, longest key wins). Applied to the prompt after command strip, before
   Return; a real change triggers the read→rewrite path (`Cmd+A` + retype), otherwise
-  the fast backspace+Return send is untouched. `Fixups` in `commands.py`, wired via
-  `state.py` `_dispatch`; seeded with `clot`/`clod`(`code`) → `Claude`(` Code`).
+  the fast backspace+Return send is untouched. `Fixups` in `commands.py`, applied in
+  `actions.py` `Actions.perform`; seeded with `clot`/`clod`(`code`) → `Claude`(` Code`).
 - [x] Core loop: wake → bootstrap → dictate → read box → strip command → send.
 - [x] Token-based command matching (handles dictation punctuation "Okay. Send.").
 - [x] onnxruntime pin (<1.19) — fixed silent 0.000 wake scores.

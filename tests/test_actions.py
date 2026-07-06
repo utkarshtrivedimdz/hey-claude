@@ -1,0 +1,93 @@
+"""Phase 2 — Actions.perform keystroke/AX choreography, isolated from the state machine.
+
+Sequencing (ACTING transition, telemetry, correction window) is tested in test_state.py;
+here we assert only *how* each command is executed over fake keys/ax ports.
+"""
+from chotu.actions import Actions, ActionOutcome
+from chotu.commands import from_config, Fixups
+from chotu.config import Config
+from tests.fakes import FakeKeys, FakeAX
+
+
+def _cmds(**over):
+    cfg = Config()
+    cfg.command_prefix = ["okay"]
+    for k, v in over.items():
+        setattr(cfg, k, v)
+    return from_config(cfg)
+
+
+def _match(text, **over):
+    m = _cmds(**over).match(text)
+    assert m is not None, f"expected a command match in {text!r}"
+    return m
+
+
+def make(fixups=None):
+    keys, ax = FakeKeys(), FakeAX()
+    return Actions(keys, ax, fixups), keys, ax
+
+
+def test_perform_stops_observing_and_dictation_first():
+    actions, keys, ax = make()
+    ax.observing = True
+    out = actions.perform(_match("hi okay send"), "hi okay send")
+    assert not ax.observing                 # released the AX observer
+    assert keys.names()[0] == "cmd_d"       # stop dictation before touching the box
+    assert isinstance(out, ActionOutcome)
+
+
+def test_send_fast_path_backspaces_and_returns():
+    actions, keys, ax = make()
+    out = actions.perform(_match("hi okay send"), "hi okay send")
+    assert keys.names() == ["cmd_d", "backspace", "ret"]
+    assert ("backspace", 10) in keys.ops    # strips " okay send"
+    assert out == ActionOutcome("sent", "send", strip=10, box_post="hi")
+
+
+def test_send_with_fixup_rewrites_whole_box():
+    actions, keys, ax = make(Fixups({"clot code": "Claude Code"}))
+    out = actions.perform(_match("open clot code okay send"), "open clot code okay send")
+    assert keys.names()[-3:] == ["clear", "type", "ret"]   # select-all, retype, submit
+    assert ("type", "open Claude Code") in keys.ops
+    assert not any(o[0] == "backspace" for o in keys.ops)  # rewrite path, not fast path
+    assert out.outcome == "sent"
+    assert out.box_post == "open Claude Code"
+
+
+def test_send_without_matching_fixup_uses_fast_path():
+    actions, keys, ax = make(Fixups({"clot code": "Claude Code"}))
+    out = actions.perform(_match("nothing to fix okay send"), "nothing to fix okay send")
+    assert keys.names()[-2:] == ["backspace", "ret"]
+    assert not any(o[0] == "type" for o in keys.ops)
+    assert out.box_post == "nothing to fix"
+
+
+def test_empty_box_send_is_noop_abort():
+    actions, keys, ax = make()
+    out = actions.perform(_match("okay send"), "okay send")   # box is only the command
+    assert keys.names() == ["cmd_d"]        # dictation stopped; no send keystrokes
+    assert not any(o[0] in ("backspace", "ret", "type", "clear") for o in keys.ops)
+    assert out == ActionOutcome("empty", "error", strip=0, box_post="")
+
+
+def test_cancel_clears_box_and_does_not_return():
+    actions, keys, ax = make()
+    out = actions.perform(_match("bad prompt okay cancel"), "bad prompt okay cancel")
+    assert "clear" in keys.names()
+    assert "ret" not in keys.names()
+    assert out.outcome == "cancelled" and out.beep == "cancel"
+
+
+def test_stop_sends_escape():
+    actions, keys, ax = make()
+    out = actions.perform(_match("okay stop"), "okay stop")
+    assert keys.names() == ["cmd_d", "esc"]
+    assert out.outcome == "stopped" and out.beep == "stop"
+
+
+def test_default_fixups_is_noop():
+    actions, keys, ax = make()   # no fixups injected
+    out = actions.perform(_match("open clot code okay send"), "open clot code okay send")
+    assert keys.names()[-2:] == ["backspace", "ret"]
+    assert out.box_post == "open clot code"

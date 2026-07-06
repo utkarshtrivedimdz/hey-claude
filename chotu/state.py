@@ -1,8 +1,11 @@
 """FR-6 state machine — pure control logic over injected ports.
 
-States: IDLE → ARMED → DICTATING → (dispatch) → IDLE. All state mutations happen
+States: IDLE → ARMED → DICTATING → ACTING → IDLE. All state mutations happen
 here; the runtime (__main__) only feeds events: on_wake (from the wake thread via
 the run-loop), on_box_change (from the AXObserver), and tick (from a timer).
+
+This module *sequences* turns and owns telemetry + the correction window; the
+keystroke/AX choreography of each command lives in `actions.py` (Phase 2).
 
 Unit-tested with fakes + a fake clock (tests/test_state.py).
 """
@@ -13,6 +16,7 @@ import time
 from enum import Enum
 from typing import Callable, Optional
 
+from .actions import Actions
 from .bootstrap import BootstrapResult
 from .commands import Fixups
 
@@ -23,15 +27,18 @@ class S(Enum):
     IDLE = "idle"
     ARMED = "armed"
     DICTATING = "dictating"
+    ACTING = "acting"
 
 
 # Declared legal transitions — the single source of truth for state changes.
 # Every value in `_transition` is asserted against this table (HARDENING-PLAN Phase 1).
-# ACTING (Phase 2) will slot between DICTATING and IDLE once dispatch is extracted.
+# DICTATING → ACTING on a command match; ACTING → IDLE once Actions.perform runs.
+# DICTATING → IDLE remains for the silence/arm-timeout backstops (no dispatch).
 LEGAL: dict[S, set[S]] = {
     S.IDLE: {S.ARMED},
     S.ARMED: {S.IDLE, S.DICTATING},
-    S.DICTATING: {S.IDLE},
+    S.DICTATING: {S.IDLE, S.ACTING},
+    S.ACTING: {S.IDLE},
 }
 
 
@@ -52,7 +59,7 @@ class StateMachine:
         self.keys = keys
         self.ax = ax
         self.commands = commands
-        self.fixups = fixups or Fixups()
+        self.actions = Actions(keys, ax, fixups)  # owns the keystroke/AX choreography (Phase 2)
         self.tel = telemetry
         self._mono = monotonic
         self._beep = beep
@@ -117,7 +124,7 @@ class StateMachine:
         m = self.commands.match(text)
         if m is not None:
             log.info("command matched: %s (prefix=%s, strip=%d)", m.action, m.prefix, m.strip_len)
-            self._dispatch(m, text)
+            self._act(m, text)
 
     def tick(self) -> None:
         now = self._mono()
@@ -142,57 +149,32 @@ class StateMachine:
                 self._transition(S.IDLE, "arm_timeout")
 
     # ---- internals -------------------------------------------------------
-    def _dispatch(self, m, text: str) -> None:
-        self.ax.stop_observing()
-        self.keys.cmd_d()  # stop dictation → frees the mic
+    def _act(self, m, text: str) -> None:
+        """Sequence a matched command: ACTING → Actions.perform → telemetry → IDLE.
 
-        box_post = m.post_text
-        if m.action == "send":
-            if not m.post_text.strip():
-                # box was only the command → nothing to send; treat as a no-op abort.
-                log.warning("'%s' matched but box empty after strip — no-op abort (nothing sent)",
-                            m.action)
-                self._beep("error")
-                self._resolve_wake(True)
-                self._log_turn("empty", m.action, m.prefix, text, 0, box_post=m.post_text)
-                self._transition(S.IDLE, "empty_box")
-                return
-            corrected = self.fixups.apply(m.post_text)
-            if corrected != m.post_text:
-                # a mishearing was corrected → rewrite the whole box (read→rewrite path):
-                # select-all + delete, retype the fixed prompt, then Return.
-                log.info("fixup rewrite before send: %r → %r", m.post_text, corrected)
-                self.keys.clear()
-                self.keys.type_text(corrected)
-                self.keys.ret()
-                box_post = corrected
-            else:
-                log.debug("send fast path: backspace %d + Return", m.strip_len)
-                self.keys.backspace(m.strip_len)
-                self.keys.ret()
-            outcome, strip = "sent", m.strip_len
-        elif m.action == "cancel":
-            self.keys.clear()
-            outcome, strip = "cancelled", 0
-        else:  # stop
-            self.keys.esc()
-            outcome, strip = "stopped", 0
+        `Actions` owns the keystroke/AX choreography; this method owns state
+        sequencing, the outcome beep, wake resolution, turn logging, and the
+        cross-turn correction window.
+        """
+        self._transition(S.ACTING, f"match_{m.action}")
+        out = self.actions.perform(m, text)
 
-        self._beep(m.action)
+        self._beep(out.beep)
         self._resolve_wake(True)
-        turn_id = self._log_turn(outcome, m.action, m.prefix, text, strip, box_post=box_post)
-        log.info("dispatched %s: box_post=%r strip=%d turn=%s", outcome, box_post, strip, turn_id)
+        turn_id = self._log_turn(out.outcome, m.action, m.prefix, text, out.strip, box_post=out.box_post)
+        log.info("dispatched %s: box_post=%r strip=%d turn=%s",
+                 out.outcome, out.box_post, out.strip, turn_id)
 
-        if outcome in ("cancelled", "stopped") and self._last_send is not None:
+        if out.outcome in ("cancelled", "stopped") and self._last_send is not None:
             tid, ts = self._last_send
             dt = (self._mono() - ts) * 1000.0
             if dt <= self.cfg.correction_window_ms:
                 log.info("correction: turn %s undone by '%s' within %.0fms (likely misfire)",
                          tid, m.action, dt)
                 self.tel.log_correction(tid, m.action, dt)
-        if outcome == "sent":
+        if out.outcome == "sent":
             self._last_send = (turn_id, self._mono())
-        self._transition(S.IDLE, f"dispatched_{outcome}")
+        self._transition(S.IDLE, f"dispatched_{out.outcome}")
 
     def _transition(self, new: S, reason: str) -> None:
         """The single state-change chokepoint (HARDENING-PLAN Phase 1).
