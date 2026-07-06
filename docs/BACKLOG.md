@@ -14,7 +14,17 @@ Actionable task list (the aspirational roadmap lives in
   wake-score distribution, set the threshold at the knee (~0.4 for this mic). Same
   loop for false-trigger rate and the Q11b command prefix.
 
-## Voice control of dialogs & buttons (AXPress) — verified feasible
+- [ ] **Run desktop-wide (any app, not just the geofast VS Code workspace).**
+  Requested 2026-07-06 — chotu should be a long-running, always-available voice
+  controller for the whole desktop, not bound to one window. Today the focus-safety
+  gate hard-binds it to a single VS Code workspace (`target.bundle_id` / `workspace`
+  / `title_substr`); the goal is to arm on wake and dictate+act into whatever window
+  is focused (or a configurable allow-list of apps). Needs: (a) generalize the focus
+  gate from one workspace to a `targets` allow-list (never type into an unlisted
+  window — keep it fail-closed); (b) per-app keymaps — dictation start + send/cancel
+  differ per app (`Cmd+D` is Claude/VS Code-specific); (c) generalized box read/write
+  (AXValue is broad, but not every app exposes an editable `AXTextArea`). Big scope
+  item — likely its own design doc + ADR before it spreads.
 
 - [ ] **Press-by-name via AXPress.** Verified 2026-07-06: when a tab is active,
   Claude Code's question dialogs expose their options as `AXRadioButton` and the

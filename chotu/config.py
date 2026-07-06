@@ -14,7 +14,7 @@ from typing import Any, Optional
 def _default_words() -> dict:
     return {
         "send": ["send", "submit", "go", "enter"],
-        "cancel": ["cancel", "scratch that", "nevermind", "never mind"],
+        "cancel": ["cancel", "scratch that", "nevermind", "never mind", "clear", "clear all"],
         "stop": ["stop", "interrupt", "abort"],
     }
 

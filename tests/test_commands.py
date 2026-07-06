@@ -5,7 +5,7 @@ from chotu.commands import Commands
 
 WORDS = {
     "send": ["send", "submit", "go", "enter"],
-    "cancel": ["cancel", "scratch that", "nevermind"],
+    "cancel": ["cancel", "scratch that", "nevermind", "clear", "clear all"],
     "stop": ["stop", "interrupt", "abort"],
 }
 PLACEHOLDERS = ["Queue another message…"]
@@ -23,6 +23,8 @@ def C(prefix):
         ("add retry loop send", ["okay"], None, None, None),          # no prefix ⇒ not a command
         ("remind me to send the invoice", ["okay"], None, None, None),
         ("fix the bug okay cancel", ["okay"], "cancel", None, "fix the bug"),
+        ("draft text okay clear", ["okay"], "cancel", None, "draft text"),          # "clear" wipes the box
+        ("draft text okay clear all", ["okay"], "cancel", None, "draft text"),       # multi-word "clear all"
         ("okay stop", ["okay"], "stop", None, ""),
         # dictation renders "okay send" as "Okay. Send." — caps + sentence punctuation
         # (found on the first live ride, 2026-07-06)

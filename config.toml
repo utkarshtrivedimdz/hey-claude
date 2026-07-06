@@ -20,7 +20,7 @@ prefix = ["okay", "ok"]
 
 [commands.words]
 send   = ["send", "submit", "go", "enter"]
-cancel = ["cancel", "scratch that", "nevermind", "never mind"]
+cancel = ["cancel", "scratch that", "nevermind", "never mind", "clear", "clear all"]
 stop   = ["stop", "interrupt", "abort"]
 
 [fixups]
