@@ -5,10 +5,12 @@ only after a wake word, recognizes a small fixed command vocabulary, and injects
 the corresponding keystrokes into the **Claude Code VS Code extension** (the sole
 target; terminal is out of scope — see §7).
 
-Status: **spec-complete, decisions locked, unbuilt** — architecture verified
-end-to-end (control surface, box-reading, event-driven observe, keystroke I/O all
-tested 2026-07-06). Engine=openWakeWord, surface=headless daemon, commands=Option A
-(dictate+strip), lang=Python+pyobjc. See `BUILD-PLAN.md` for the build path.
+Status: **v1 implemented** (2026-07-06) — code in `chotu/`, 26 unit + 3 live
+integration tests green. Architecture verified end-to-end (control surface,
+box-reading, event-driven observe, keystroke I/O). Engine=openWakeWord,
+surface=headless daemon, commands=Option A (dictate+strip), lang=Python+pyobjc.
+Remaining to *use* it: run `scripts/setup.sh`, grant Mic+Accessibility, train the
+"chotu" model (`scripts/train_chotu.md`). See `BUILD-PLAN.md` / `ARCHITECTURE.md`.
 
 ---
 
