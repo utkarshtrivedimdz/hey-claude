@@ -107,12 +107,25 @@ def main(argv=None) -> int:
     p.add_argument("--config", help="path to config.toml")
     p.add_argument("--once", action="store_true", help="arm once without the wake word (M1 smoke test)")
     p.add_argument("--read", action="store_true", help="print the Claude box AXValue once and exit (debug)")
+    p.add_argument("--mic-check", action="store_true", help="record 2s and report level (verify Mic permission)")
     p.add_argument("--version", action="store_true")
     args = p.parse_args(argv)
 
     if args.version:
         print(f"hey-claude {__version__}")
         return 0
+
+    if args.mic_check:
+        import numpy as np
+        import sounddevice as sd
+        print("input device:", sd.query_devices(kind="input")["name"])
+        print("recording 2s — speak now…")
+        rec = sd.rec(int(2 * 16000), samplerate=16000, channels=1, dtype="int16")
+        sd.wait()
+        peak = int(np.abs(rec.astype("int32")).max())
+        ok = peak > 300
+        print(f"peak amplitude: {peak} / 32767 — {'MIC OK' if ok else 'SILENT (grant Microphone to this process)'}")
+        return 0 if ok else 2
 
     cfg = config_mod.load(_find_config(args.config))
 
