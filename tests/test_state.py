@@ -1,10 +1,10 @@
 """FR-6 state machine — transitions, strip ops, self-trigger, disarm, corrections."""
 import pytest
 
-from chotu.config import Config
-from chotu.commands import from_config, Fixups
-from chotu.state import StateMachine, S, LEGAL, IllegalTransition
-from chotu.bootstrap import BootstrapResult
+from hey_claude.config import Config
+from hey_claude.commands import from_config, Fixups
+from hey_claude.state import StateMachine, S, LEGAL, IllegalTransition
+from hey_claude.bootstrap import BootstrapResult
 from tests.fakes import FakeClock, FakeKeys, FakeAX, FakeBootstrap, FakeTelemetry
 
 
@@ -81,7 +81,7 @@ def test_bootstrap_failure_aborts_before_keystrokes():
 
 
 def test_external_mic_off_disarms_with_dropped_beep():
-    # Button is ground truth: if it goes off mid-turn (user clicks mic), chotu disarms.
+    # Button is ground truth: if it goes off mid-turn (user clicks mic), hey-claude disarms.
     beeps: list = []
     sm, cfg, clock, keys, ax, tel, boot = make(beeps=beeps)
     sm.on_wake(0.9)

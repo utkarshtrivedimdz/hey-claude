@@ -14,7 +14,7 @@ Diagrams are Mermaid (render in VS Code with the Mermaid extension, and on GitHu
 ```mermaid
 graph TD
   MIC(("microphone")):::ext
-  subgraph daemon["chotu daemon (LaunchAgent)"]
+  subgraph daemon["hey-claude daemon (LaunchAgent)"]
     W["wake.py<br/>openWakeWord"]
     SM["state.py<br/>state machine (FR-6)"]
     BS["bootstrap.py<br/>open + focus-safety gate"]
@@ -171,7 +171,7 @@ sequenceDiagram
   participant VS as VS Code
   participant T as telemetry
 
-  U->>W: say "chotu"
+  U->>W: say "hey-claude"
   W->>SM: on_wake(score=0.72)
   SM->>T: log_wake(accepted, score)
   Note over SM: idle → armed
@@ -239,7 +239,7 @@ match routes `dictating → acting → idle`, with `Actions.perform` doing the d
 ```mermaid
 stateDiagram-v2
   [*] --> idle
-  idle --> armed: wake "chotu" (≥ threshold)
+  idle --> armed: wake "hey-claude" (≥ threshold)
   armed --> idle: bootstrap fail / focus-gate abort / arm-timeout
   armed --> dictating: Cmd+Esc → Cmd+D
   dictating --> dictating: box value-changed (observe)
@@ -347,7 +347,7 @@ Near-misses (below trigger but above a `log_floor`) are logged with
 { "schema":1, "ts":"2026-07-06T21:03:19.242Z", "event":"correction", "session_id":"s_8f2",
   "turn_id":"t_abc", "signal":"stop", "within_ms":2400, "inferred":"misfire" }
 ```
-Rule: a `stop`/`cancel`/`scratch` (or an immediate re-`chotu` redo) within
+Rule: a `stop`/`cancel`/`scratch` (or an immediate re-`hey-claude` redo) within
 `correction_window_ms` of a `sent` turn ⇒ that turn was probably a mistake.
 
 **`state_transition`** — every `IDLE`/`ARMED`/`DICTATING` change, emitted by the single
@@ -444,7 +444,7 @@ The riskiest logic; enumerate the traps explicitly.
 ```python
 # tests/test_commands.py  (illustrative)
 import pytest
-from chotu.commands import Commands
+from hey_claude.commands import Commands
 
 @pytest.mark.parametrize("text,prefix,cmd,post", [
     ("add retry loop okay send", "okay", "send", "add retry loop"),

@@ -40,8 +40,10 @@ def _default_keymap() -> dict:
 @dataclass
 class Config:
     # wake
-    wake_phrase: str = "chotu"
-    wake_model: str = ""                       # path to trained chotu.onnx; empty => fallback
+    wake_phrase: str = "hey jarvis"            # display label; actual detection uses the model
+                                               # below, or the pretrained fallback (no trained
+                                               # "hey claude" model yet — you say "hey jarvis")
+    wake_model: str = ""                       # path to a trained .onnx; empty => pretrained fallback
     wake_pretrained_fallback: str = "hey_jarvis"
     # onnx is REQUIRED on macOS: tflite_runtime has no arm64 wheels, and openWakeWord's
     # default 'tflite' framework silently zeroes the melspec/embedding preprocessor when
@@ -59,7 +61,7 @@ class Config:
     # dictation fixups: mishearing → correction (case-insensitive, whole-word)
     fixups: dict = field(default_factory=dict)
 
-    # dictation button (ground truth): chotu AXPresses this VS Code panel button and reads
+    # dictation button (ground truth): hey-claude AXPresses this VS Code panel button and reads
     # its AXDescription to know if recording is on. See DICTATION-AX-PLAN.md.
     dictation_button_desc_off: str = "Voice dictation"   # AXDescription when OFF
     dictation_button_desc_on: str = "Stop recording"     # AXDescription when ON (blue)

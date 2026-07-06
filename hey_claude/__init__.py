@@ -1,4 +1,4 @@
-"""chotu — wake-word voice controller for Claude Code (macOS).
+"""hey-claude — wake-word voice controller for Claude Code (macOS).
 
 Package layout (see docs/ARCHITECTURE.md):
   config     — load/validate config.toml
@@ -16,8 +16,8 @@ Package layout (see docs/ARCHITECTURE.md):
 import logging as _logging
 
 # Library convention: a NullHandler on the package root so records don't hit the
-# last-resort handler when nothing is configured (e.g. under pytest). chotu/log.py's
+# last-resort handler when nothing is configured (e.g. under pytest). hey_claude/log.py's
 # configure() attaches the real stderr + file handlers at daemon startup.
-_logging.getLogger("chotu").addHandler(_logging.NullHandler())
+_logging.getLogger("hey_claude").addHandler(_logging.NullHandler())
 
 __version__ = "0.1.0"

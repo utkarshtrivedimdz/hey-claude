@@ -105,7 +105,7 @@ def run(cfg, once: bool = False) -> int:
 
     if once:
         log.info("--once: arming now (no wake word) — dictate a prompt then say your command word")
-        print("chotu --once: arming now — dictate a prompt then say your command word.")
+        print("hey-claude --once: arming now — dictate a prompt then say your command word.")
         q.put(1.0)
     else:
         from .wake import WakeListener
@@ -113,9 +113,9 @@ def run(cfg, once: bool = False) -> int:
             state["mic_lost"] = True
         listener = WakeListener(cfg, lambda score: q.put(score), on_mic_lost=_on_mic_lost)
         threading.Thread(target=listener.run, name="wake", daemon=True).start()
-        log.info("chotu listening: wake=%r model=%r device=%s",
+        log.info("hey-claude listening: wake=%r model=%r device=%s",
                  cfg.wake_phrase, cfg.wake_model or cfg.wake_pretrained_fallback, cfg.mic_device)
-        print(f"chotu listening (wake='{cfg.wake_phrase}', "
+        print(f"hey-claude listening (wake='{cfg.wake_phrase}', "
               f"model='{cfg.wake_model or cfg.wake_pretrained_fallback}'). Ctrl+C to quit.")
 
     # CFRunLoopRun() (not NSRunLoop.run()) so CFRunLoopStop cleanly ends --once.
@@ -128,12 +128,12 @@ def run(cfg, once: bool = False) -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="chotu", description="Wake-word voice controller for Claude Code")
+    p = argparse.ArgumentParser(prog="hey-claude", description="Wake-word voice controller for Claude Code")
     p.add_argument("--config", help="path to config.toml")
     p.add_argument("--once", action="store_true", help="arm once without the wake word (M1 smoke test)")
     p.add_argument("--read", action="store_true", help="print the Claude box AXValue once and exit (debug)")
     p.add_argument("--mic-check", action="store_true", help="record 2s and report level (verify Mic permission)")
-    p.add_argument("--debug", action="store_true", help="verbose DEBUG logging to stderr + ~/Library/Logs/hey-claude/chotu.log")
+    p.add_argument("--debug", action="store_true", help="verbose DEBUG logging to stderr + ~/Library/Logs/hey-claude/hey-claude.log")
     p.add_argument("--version", action="store_true")
     args = p.parse_args(argv)
 
@@ -156,7 +156,7 @@ def main(argv=None) -> int:
     cfg_path = _find_config(args.config)
     cfg = config_mod.load(cfg_path)
     logmod.configure(debug=logmod.debug_enabled(args.debug), log_dir=cfg.telemetry_log_dir)
-    log.info("chotu %s starting (config=%s, debug=%s)", __version__, cfg_path, logmod.debug_enabled(args.debug))
+    log.info("hey-claude %s starting (config=%s, debug=%s)", __version__, cfg_path, logmod.debug_enabled(args.debug))
 
     if args.read:
         from .ax import RealAX

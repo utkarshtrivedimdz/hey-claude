@@ -2,16 +2,16 @@
 data). This is the "watch what the daemon is doing" channel.
 
 Every module logs via a stdlib logger (`logging.getLogger(__name__)`, e.g.
-`chotu.state`). `configure()` — called once from `__main__` — attaches two sinks to
-the `chotu` root logger:
+`hey_claude.state`). `configure()` — called once from `__main__` — attaches two sinks to
+the `hey-claude` root logger:
 
   • stderr        → live stream. In a terminal you see it as it happens; under
                     launchd it lands in ~/Library/Logs/hey-claude/daemon.err.log.
-  • chotu.log     → a rolling file at <log_dir>/chotu.log you can `tail -f` or read
+  • hey-claude.log     → a rolling file at <log_dir>/hey-claude.log you can `tail -f` or read
                     AFTER a run (survives the process; rotates at ~2 MB × 3).
 
 Verbosity: INFO by default gives the narrative (wake → arm → dictate → sent /
-cancel / timeout). `--debug` or CHOTU_DEBUG=1 turns on DEBUG (every keystroke, box
+cancel / timeout). `--debug` or HEY_CLAUDE_DEBUG=1 turns on DEBUG (every keystroke, box
 change, AX callback, focus-gate poll).
 
 Until configure() runs there are no handlers, so unit tests stay silent and the
@@ -25,21 +25,21 @@ import os
 import sys
 from pathlib import Path
 
-_ROOT = "chotu"
+_ROOT = "hey_claude"
 _configured = False
 
 
 def debug_enabled(flag: bool = False) -> bool:
-    """DEBUG verbosity is on if --debug was passed or CHOTU_DEBUG/CHOTU_WAKE_DEBUG=1."""
+    """DEBUG verbosity is on if --debug was passed or HEY_CLAUDE_DEBUG/HEY_CLAUDE_WAKE_DEBUG=1."""
     return (
         flag
-        or os.environ.get("CHOTU_DEBUG") == "1"
-        or os.environ.get("CHOTU_WAKE_DEBUG") == "1"
+        or os.environ.get("HEY_CLAUDE_DEBUG") == "1"
+        or os.environ.get("HEY_CLAUDE_WAKE_DEBUG") == "1"
     )
 
 
 def configure(debug: bool = False, log_dir: str | None = None) -> logging.Logger:
-    """Attach stderr + rolling-file handlers to the `chotu` logger. Idempotent —
+    """Attach stderr + rolling-file handlers to the `hey-claude` logger. Idempotent —
     a second call only adjusts the level, so re-invoking is safe."""
     global _configured
     root = logging.getLogger(_ROOT)
@@ -65,7 +65,7 @@ def configure(debug: bool = False, log_dir: str | None = None) -> logging.Logger
             p = Path(log_dir).expanduser()
             p.mkdir(parents=True, exist_ok=True)
             fh = logging.handlers.RotatingFileHandler(
-                p / "chotu.log", maxBytes=2_000_000, backupCount=3
+                p / "hey-claude.log", maxBytes=2_000_000, backupCount=3
             )
             fh.setFormatter(fmt)
             root.addHandler(fh)

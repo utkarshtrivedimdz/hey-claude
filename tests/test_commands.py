@@ -1,7 +1,7 @@
 """Golden table for command match + strip (ARCHITECTURE §7.3) — the riskiest logic."""
 import pytest
 
-from chotu.commands import Commands
+from hey_claude.commands import Commands
 
 WORDS = {
     "send": ["send", "submit", "go", "enter"],

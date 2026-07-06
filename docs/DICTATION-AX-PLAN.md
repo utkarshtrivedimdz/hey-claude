@@ -6,7 +6,7 @@
 
 ## Problem (observed, reproduced)
 
-chotu starts/stops dictation by sending **Cmd+D** and *assuming* it worked. Two live
+hey-claude starts/stops dictation by sending **Cmd+D** and *assuming* it worked. Two live
 failures trace to this:
 
 1. **"Dictation randomly starts."** `Cmd+D` is also VS Code's *add-selection-to-next-match*
@@ -14,7 +14,7 @@ failures trace to this:
    involved. (Silent-mic test confirmed the wake model is not the trigger: 40 s silence →
    peak 0.000.)
 2. **"Detected → focused VS Code → dictation didn't start."** `Cmd+D` is an unreliable way
-   to hit the button, and chotu logged `dictation started` on the *keystroke*, never
+   to hit the button, and hey-claude logged `dictation started` on the *keystroke*, never
    checking reality. (Focus/raise is **not** the issue — VS Code comes forward fine.)
 
 **Root cause:** dictation is driven by a colliding keystroke with no read-back of true
@@ -34,7 +34,7 @@ Probes (`scripts/ax_probe.py`, `ax_toggle_probe.py`, `ax_notify_probe.py`) again
 
 **Core principle (your requirement): `DICTATING` ⟺ the button is blue.** An `AXObserver`
 on the button (`AXTitleChanged`) is the *authority* for entering and leaving `DICTATING`.
-chotu only *requests* changes (AXPress); the **event** confirms them. No poll, no assume.
+hey-claude only *requests* changes (AXPress); the **event** confirms them. No poll, no assume.
 
 This is the same observer pattern already used for the textarea (`AXValueChanged`), so it
 fits the architecture rather than bolting on.
@@ -67,7 +67,7 @@ fits the architecture rather than bolting on.
 Verification is now **implicit in the event**: we only ever enter `DICTATING` because the
 button reported blue. The old `verify_timeout_ms` poll is deleted.
 
-### Port surface — `chotu/ports.py` (`AXPort`)
+### Port surface — `hey_claude/ports.py` (`AXPort`)
 
 ```python
 # dictation (button = truth)
@@ -80,7 +80,7 @@ def observe_box(self, on_change: Callable[[str], None]) -> bool: ...
 def stop_observing_box(self) -> None: ...
 ```
 
-### `chotu/ax.py` (RealAX)
+### `hey_claude/ax.py` (RealAX)
 
 - Extract a tiny internal `_Observer` holder `(observer, source, element, handler)` so the
   **box** and **dictation** observers coexist without duplicated teardown logic (the module
@@ -94,7 +94,7 @@ def stop_observing_box(self) -> None: ...
 - `observe_dictation(cb)` — attach an `AXObserver` for **`AXTitleChanged`** on the button;
   handler reads `AXDescription`, calls `cb(desc == on_label)`.
 
-### `chotu/state.py` / `chotu/actions.py`
+### `hey_claude/state.py` / `hey_claude/actions.py`
 
 - Remove all three `cmd_d` calls (start, silence-stop, command-stop).
 - Add the `on_dictation_change` event handler (above).
@@ -112,7 +112,7 @@ def stop_observing_box(self) -> None: ...
 - **Telemetry:** transition reasons above; `dictation_verified=True` on turns (we only reach
   `DICTATING` via truth).
 
-### Config — `config.toml` + `chotu/config.py`
+### Config — `config.toml` + `hey_claude/config.py`
 
 ```toml
 [dictation]
@@ -174,7 +174,7 @@ the `keys.py` module docstring reference. Confirmed no other caller.
 
 1. Unit suite green (`.venv/bin/python -m pytest`).
 2. Live: wake → `listening` beep + button turns blue (`DICTATING`) → speak → command →
-   button off (`IDLE`). Manually clicking the mic off mid-turn disarms chotu. Normal editing
+   button off (`IDLE`). Manually clicking the mic off mid-turn disarms hey-claude. Normal editing
    `Cmd+D` no longer starts dictation.
 3. Keep `scripts/wake_listen.py`, `ax_probe.py`, `ax_toggle_probe.py`, `ax_notify_probe.py`
    as committed diagnostics.

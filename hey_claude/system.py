@@ -72,7 +72,7 @@ class RealSystem:
         # `open -a` goes through LaunchServices, which the OS honors as a user-initiated
         # foreground request even from a background process. NSRunningApplication's
         # activateWithOptions_(IgnoringOtherApps) is NOT honored cross-app on macOS 15
-        # Sequoia — a backgrounded chotu could not pull VS Code in front of e.g. Firefox,
+        # Sequoia — a backgrounded hey-claude could not pull VS Code in front of e.g. Firefox,
         # so the focus gate timed out and the turn aborted. `open -a` fixes that; we still
         # call activateWithOptions_ first as a cheap in-process nudge when already running.
         a = self._running_app()

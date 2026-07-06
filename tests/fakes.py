@@ -1,7 +1,7 @@
 """Test doubles for the I/O ports — record ops, script returns. No pyobjc."""
 from __future__ import annotations
 
-from chotu.bootstrap import BootstrapResult
+from hey_claude.bootstrap import BootstrapResult
 
 
 class FakeClock:

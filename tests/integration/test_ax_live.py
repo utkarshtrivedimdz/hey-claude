@@ -7,9 +7,9 @@ import pytest
 
 pytest.importorskip("ApplicationServices")
 
-from chotu import config
-from chotu.ax import RealAX
-from chotu.system import RealSystem
+from hey_claude import config
+from hey_claude.ax import RealAX
+from hey_claude.system import RealSystem
 
 pytestmark = pytest.mark.integration
 
@@ -36,5 +36,5 @@ def test_system_queries(cfg):
 
 
 def test_keys_construct(cfg):
-    from chotu.keys import RealKeys
+    from hey_claude.keys import RealKeys
     RealKeys(cfg.keymap)  # constructing must not raise; we don't fire keys in CI

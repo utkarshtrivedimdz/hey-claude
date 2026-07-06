@@ -3,7 +3,7 @@
 #
 # Installed to the INTERNAL disk (~/Library/Application Support/hey-claude/) so
 # launchd can always start it at login, then it waits for the repo's venv to
-# become available before starting chotu. This makes auto-start survive the boot
+# become available before starting hey-claude. This makes auto-start survive the boot
 # race when the repo + venv live on an external volume (e.g. /Volumes/...): the
 # wait-loop is a no-op for internal installs and blocks until mount for external.
 set -u
@@ -25,5 +25,5 @@ if [ ! -x "$PY" ]; then
 fi
 
 cd "$REPO" || exit 1
-echo "$(date '+%Y-%m-%d %H:%M:%S') hey-claude: venv found; starting chotu" >&2
-exec "$PY" -m chotu
+echo "$(date '+%Y-%m-%d %H:%M:%S') hey-claude: venv found; starting hey-claude" >&2
+exec "$PY" -m hey_claude

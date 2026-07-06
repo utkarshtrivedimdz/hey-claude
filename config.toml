@@ -1,8 +1,9 @@
 # hey-claude config (FR-5). All keys optional — omitted keys use defaults.
 
 [wake]
-phrase = "chotu"
-# Path to your trained openWakeWord model for "chotu" (see scripts/train_chotu.md).
+phrase = "hey jarvis"   # display label only; the spoken trigger is whatever `model` (or the
+                        # pretrained_fallback) detects — "hey jarvis" until you train "hey claude".
+# Path to your trained openWakeWord model (see scripts/train-wake-word.md).
 # Empty => fall back to a pretrained phrase so the daemon still runs end-to-end.
 model = ""
 pretrained_fallback = "hey_jarvis"
@@ -14,7 +15,7 @@ log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
 # mic_device = 1       # sounddevice device index; omit for default input
 
 [dictation]
-# chotu starts/stops dictation by AXPress-ing the Claude panel's Voice-dictation button
+# hey-claude starts/stops dictation by AXPress-ing the Claude panel's Voice-dictation button
 # (NOT Cmd+D — that collided with VS Code's multi-cursor shortcut). The button's
 # AXDescription is the ground truth for whether recording is on; an AXObserver on it
 # drives the DICTATING state event-driven. Override only if the extension renames it.
@@ -42,7 +43,7 @@ clot = "Claude"
 clod = "Claude"
 
 [target]
-# The VS Code window chotu is allowed to type into (focus-safety gate). Set these to
+# The VS Code window hey-claude is allowed to type into (focus-safety gate). Set these to
 # YOUR target. Keep your real values in ~/.config/hey-claude/config.toml — it is loaded
 # before this file, so this tracked copy stays a generic example.
 bundle_id    = "com.microsoft.VSCode"

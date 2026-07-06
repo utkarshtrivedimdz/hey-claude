@@ -3,7 +3,7 @@
 Verified 2026-07-06: type + backspace + Return land in the box (AX writes don't
 persist, so keystrokes are the write path). Esc/Cmd+Esc=key 53, Return=key 36,
 Delete/backspace=key 51. (Dictation is NOT a keystroke — it's an AXPress on the
-Voice-dictation button; see chotu/ax.py and DICTATION-AX-PLAN.md.)
+Voice-dictation button; see hey_claude/ax.py and DICTATION-AX-PLAN.md.)
 """
 from __future__ import annotations
 

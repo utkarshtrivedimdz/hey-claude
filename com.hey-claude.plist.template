@@ -2,13 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Generated from this template by scripts/setup.sh (paths substituted).
-     Runs an internal-disk launcher (launch-chotu.sh) that waits for the repo's
-     venv before starting chotu, so auto-start survives login even when the repo
+     Runs an internal-disk launcher (launch-hey-claude.sh) that waits for the repo's
+     venv before starting hey-claude, so auto-start survives login even when the repo
      + venv live on an external volume. No external path is referenced here. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hey-claude.chotu</string>
+    <string>com.hey-claude</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -19,7 +19,7 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart on a crash (non-zero exit), but NOT on a clean exit(0). chotu exits 0
+    <!-- Restart on a crash (non-zero exit), but NOT on a clean exit(0). hey-claude exits 0
          when the mic device disconnects (Bluetooth drop) so it stops instead of running
          deaf; SuccessfulExit=false leaves it down for a manual reconnect + restart. -->
     <key>KeepAlive</key>

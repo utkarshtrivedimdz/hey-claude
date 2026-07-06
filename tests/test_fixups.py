@@ -1,7 +1,7 @@
 """Dictation fixups — case-insensitive, whole-word mishearing correction."""
 import pytest
 
-from chotu.commands import Fixups
+from hey_claude.commands import Fixups
 
 M = {
     "clot code": "Claude Code",

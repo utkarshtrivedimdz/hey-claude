@@ -5,17 +5,17 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Near-term
 
-- [ ] **Train the "chotu" wake model (highest-leverage for accuracy).** Replace the
+- [ ] **Train the "hey-claude" wake model (highest-leverage for accuracy).** Replace the
   `hey_jarvis` fallback. Do it with **positives recorded through the actual Bluetooth
   mic** (domain match) — scores swung 0.4–0.95 on the generic model; a personalized
-  one should be far tighter. See `scripts/train_chotu.md`; set `wake.model` after.
+  one should be far tighter. See `scripts/train-wake-word.md`; set `wake.model` after.
 
 - [ ] **Tune `wake.threshold` from telemetry.** Run `scripts/stats.py`, read the
   wake-score distribution, set the threshold at the knee (~0.4 for this mic). Same
   loop for false-trigger rate and the Q11b command prefix.
 
 - [ ] **Run desktop-wide (any app, not just the geofast VS Code workspace).**
-  Requested 2026-07-06 — chotu should be a long-running, always-available voice
+  Requested 2026-07-06 — hey-claude should be a long-running, always-available voice
   controller for the whole desktop, not bound to one window. Today the focus-safety
   gate hard-binds it to a single VS Code workspace (`target.bundle_id` / `workspace`
   / `title_substr`); the goal is to arm on wake and dictate+act into whatever window
@@ -44,14 +44,14 @@ Actionable task list (the aspirational roadmap lives in
     tab is invisible; the command must focus that tab first (or fail with a cue).
   - **Bonus — DONE 2026-07-06:** dictation now `AXPress`es the `Voice dictation` button
     instead of `Cmd+D` (killed the multi-cursor collision) and reads its AXDescription /
-    AXTitleChanged as ground truth. The reusable `_find_element` finder in `chotu/ax.py`
+    AXTitleChanged as ground truth. The reusable `_find_element` finder in `hey_claude/ax.py`
     is ready for the press-by-name commands above. See DICTATION-AX-PLAN.md.
 - [ ] Keystroke fallback for widgets that don't expose `AXPress` (↑/↓ + Enter, Esc).
 
 ## UX
 
 - [~] **Menu-bar state indicator** (idle / armed / dictating) — **descoped 2026-07-06.**
-  The VS Code Voice-dictation button already IS the indicator: chotu drives + observes it
+  The VS Code Voice-dictation button already IS the indicator: hey-claude drives + observes it
   (AXPress + AXTitleChanged is the DICTATING ground truth), so blue = listening, off = not.
   That's the same signal a menu-bar dot would show, and the user confirms it's sufficient.
   Only revisit if we go **desktop-wide** (no VS Code button visible in other apps). (§10)
@@ -59,11 +59,11 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Robustness / ops
 
-- [x] **Recover from mic device loss (Bluetooth drop silently deafened chotu).**
+- [x] **Recover from mic device loss (Bluetooth drop silently deafened hey-claude).**
   Done 2026-07-07. Symptom (2026-07-06): disconnecting the OnePlus Buds mid-session
   left the daemon alive but deaf — the wake stream is opened once at startup bound to
   `device=None` (the default input *at that time*); when that device disappears
-  PortAudio stops calling the callback, with no error logged, so chotu looked running
+  PortAudio stops calling the callback, with no error logged, so hey-claude looked running
   but heard nothing until a manual restart. **Chosen approach: detect-and-stop with
   manual recovery** (user preference — they restart when they reconnect the headset),
   not self-heal/re-open. `wake.py` runs a no-audio watchdog: no callback for 5 s ⇒
@@ -80,7 +80,7 @@ Actionable task list (the aspirational roadmap lives in
   plain LaunchAgent grant misbehaves.
 - [ ] **Move repo + venv off the external volume** (`/Volumes/GeofastStorage`) —
   now *mitigated* (not fixed) by the internal launcher, which waits up to 5 min for
-  the volume to mount before starting chotu. Moving to internal disk would remove the
+  the volume to mount before starting hey-claude. Moving to internal disk would remove the
   wait + the "drive unplugged = never runs" failure mode entirely. Lower priority now.
 - [ ] **Re-register the AXObserver on focus** each turn (a sent message re-renders the
   panel; within-a-turn is stable — verified). Harden for multi-turn sessions. (Q12)
@@ -89,7 +89,7 @@ Actionable task list (the aspirational roadmap lives in
 
 ## Later (§10 roadmap)
 
-- [ ] **Voice snippets / macros** — keyword → chotu types a canned block (proven
+- [ ] **Voice snippets / macros** — keyword → hey-claude types a canned block (proven
   feasible via keystroke write, Q11a).
 - [ ] **Natural-language commands** — match natural phrasing from the box, beyond
   fixed words (no new models; Q2/Q11b).
@@ -102,11 +102,11 @@ Actionable task list (the aspirational roadmap lives in
 
 - [x] **Auto-start at login via LaunchAgent + internal launcher.** Shipped 2026-07-06.
   `setup.sh` installs a launcher on the internal disk (`~/Library/Application
-  Support/hey-claude/launch-chotu.sh`) and a `RunAtLoad`/`KeepAlive` LaunchAgent that
-  runs it; the launcher waits for the repo's venv before starting chotu, so login
+  Support/hey-claude/launch-hey-claude.sh`) and a `RunAtLoad`/`KeepAlive` LaunchAgent that
+  runs it; the launcher waits for the repo's venv before starting hey-claude, so login
   survives the boot mount-race even with the repo on an external USB volume. Verified:
   mic stream opens + `focus_gate=pass` under launchd (Accessibility + Microphone carry
-  over). Templates: `launch-chotu.sh.template`, `com.hey-claude.chotu.plist.template`.
+  over). Templates: `launch-hey-claude.sh.template`, `com.hey-claude.plist.template`.
 - [x] **Dictation fixups (substitution map).** Requested + shipped 2026-07-06 —
   `[fixups]` table in `config.toml` maps mishearings → corrections (case-insensitive,
   whole-word, longest key wins). Applied to the prompt after command strip, before

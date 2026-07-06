@@ -2,7 +2,7 @@
 
 Runs ONLY the openWakeWord model against the mic and prints a live bar of the score,
 flagging every crossing of the configured threshold. Nothing is typed anywhere; VS Code
-is never touched. Use this to confirm "hey jarvis" (or a trained "chotu") fires reliably
+is never touched. Use this to confirm "hey jarvis" (or a trained "hey-claude") fires reliably
 and to tune wake.threshold before running the full daemon.
 
     .venv/bin/python -m scripts.wake_listen                 # use config.toml + defaults
@@ -17,7 +17,7 @@ import argparse
 import sys
 import time
 
-from chotu import config as _config
+from hey_claude import config as _config
 
 
 def main(argv=None) -> int:
@@ -76,7 +76,7 @@ def main(argv=None) -> int:
     above = False        # currently inside a burst?
     last_event_t = -999.0
 
-    # Non-blocking capture (mirrors chotu/wake.py): the callback ONLY buffers into a queue,
+    # Non-blocking capture (mirrors hey_claude/wake.py): the callback ONLY buffers into a queue,
     # so predict()/print latency can never overflow the mic and drop audio.
     q: "_queue.Queue[bytes]" = _queue.Queue()
     ovf = [0]

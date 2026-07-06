@@ -6,7 +6,7 @@ This doc is the *how*. Everything here is grounded in the 2026-07-06 feasibility
 tests — the hard parts (AX read, event-driven observe, keystroke write) are proven.
 
 ## Locked decisions
-- **Engine:** openWakeWord (train "chotu"). Fallback: `SFSpeechRecognizer` (Q1).
+- **Engine:** openWakeWord (train "hey-claude"). Fallback: `SFSpeechRecognizer` (Q1).
 - **Surface:** headless LaunchAgent daemon + beeps + JSONL log (Q5).
 - **Commands:** Option A — dictated into the box, then stripped (Q11b).
 - **Reads:** event-driven `AXObserver`; **writes:** keystrokes (AX-set doesn't stick).
@@ -14,7 +14,7 @@ tests — the hard parts (AX read, event-driven observe, keystroke write) are pr
 
 ## Core loop (verified)
 ```
-"chotu" (openWakeWord)
+"hey-claude" (openWakeWord)
   → set AXManualAccessibility=true on VS Code   [startup, once]
   → bootstrap: open VS Code → geofast workspace → raise to front
   → focus-safety gate: frontmost==com.microsoft.VSCode && title~"geofast (Workspace)"
@@ -31,7 +31,7 @@ tests — the hard parts (AX read, event-driven observe, keystroke write) are pr
 ## Repo layout
 ```
 hey-claude/                     (~/Documents/GitHub/hey-claude, local git)
-├── chotu/
+├── hey_claude/
 │   ├── __main__.py             # daemon entry: wire wake → state machine
 │   ├── config.py               # load/validate config (FR-5)
 │   ├── ax.py                   # AX layer: read AXValue, AXObserver (from tests)
@@ -41,7 +41,7 @@ hey-claude/                     (~/Documents/GitHub/hey-claude, local git)
 │   ├── commands.py             # trailing-token match, disambiguation, strip, dispatch
 │   ├── state.py                # FR-6 state machine + timeouts + self-trigger guard
 │   └── telemetry.py            # FR-7 JSONL logging + stats
-├── models/chotu.onnx           # trained wake-word model
+├── models/hey_claude.onnx           # trained wake-word model
 ├── config.toml                 # user config
 ├── scripts/stats.py            # derived metrics over the log
 ├── tests/
@@ -50,7 +50,7 @@ hey-claude/                     (~/Documents/GitHub/hey-claude, local git)
 │   ├── test_telemetry.py       # redaction, correction window
 │   ├── test_stats.py           # metric math over fixtures
 │   └── integration/            # @pytest.mark.integration — live VS Code, skipped by default
-├── com.hey-claude.chotu.plist  # LaunchAgent
+├── com.hey-claude.plist  # LaunchAgent
 └── README.md                   # setup, permissions, config
 ```
 
@@ -67,7 +67,7 @@ unit tests inject fakes and **never import pyobjc**. Full strategy + golden tabl
 
 ### M1 — Walking skeleton (no wake word yet) ⭐ prove the loop end-to-end
 - `ax.py` + `keys.py` from the verified test code (below), behind `AXPort`/`KeysPort`.
-- `commands.py` + a minimal `state.py`; a CLI trigger (`python -m chotu --once`) that
+- `commands.py` + a minimal `state.py`; a CLI trigger (`python -m hey_claude --once`) that
   runs: focus-safety gate → Cmd+Esc → Cmd+D → observe box → detect trailing "send" →
   strip → Return.
 - **Tests:** land `test_commands.py` (golden table, ARCH §7.3) + `test_state.py`
@@ -76,7 +76,7 @@ unit tests inject fakes and **never import pyobjc**. Full strategy + golden tabl
   in the sent text. (This is the whole system minus the wake word.)
 
 ### M2 — Wake word
-- Train "chotu" (openWakeWord synthetic-data: piper TTS → augment → train → onnx).
+- Train "hey-claude" (openWakeWord synthetic-data: piper TTS → augment → train → onnx).
 - `wake.py`: always-on listener, fires the M1 loop on detection. Threshold to config.
 
 ### M3 — Control layer (FR-6)

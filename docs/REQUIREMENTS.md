@@ -5,12 +5,12 @@ only after a wake word, recognizes a small fixed command vocabulary, and injects
 the corresponding keystrokes into the **Claude Code VS Code extension** (the sole
 target; terminal is out of scope — see §7).
 
-Status: **v1 implemented** (2026-07-06) — code in `chotu/`, 26 unit + 3 live
+Status: **v1 implemented** (2026-07-06) — code in `hey_claude/`, 26 unit + 3 live
 integration tests green. Architecture verified end-to-end (control surface,
 box-reading, event-driven observe, keystroke I/O). Engine=openWakeWord,
 surface=headless daemon, commands=Option A (dictate+strip), lang=Python+pyobjc.
 Remaining to *use* it: run `scripts/setup.sh`, grant Mic+Accessibility, train the
-"chotu" model (`scripts/train_chotu.md`). See `BUILD-PLAN.md` / `ARCHITECTURE.md`.
+"hey-claude" model (`scripts/train-wake-word.md`). See `BUILD-PLAN.md` / `ARCHITECTURE.md`.
 
 ---
 
@@ -20,7 +20,7 @@ Work with the Claude Code VS Code extension without sitting at the keyboard:
 start a dictation turn and submit it hands-free, and approve/deny the common
 prompts, using voice from across the room.
 
-Success = "Chotu" → speak a prompt → "send", with no keyboard contact for a
+Success = "Hey-Claude" → speak a prompt → "send", with no keyboard contact for a
 normal turn, and a spoken "approve" for the routine permission prompts.
 
 ## 2. Primary user story
@@ -32,10 +32,10 @@ Single-user, personal machine. No multi-user, no accounts, no distribution (yet)
 
 ## 3. Functional requirements
 
-### FR-0 Primary "chotu" happy path
-The end-to-end flow saying **"chotu"** should drive (no keyboard):
+### FR-0 Primary "hey-claude" happy path
+The end-to-end flow saying **"hey-claude"** should drive (no keyboard):
 
-1. **Bootstrap (chotu-owned, idempotent). `code` CLI is NOT on PATH — use `open`:**
+1. **Bootstrap (hey-claude-owned, idempotent). `code` CLI is NOT on PATH — use `open`:**
    - **VS Code running?** if not, `open -n -a "Visual Studio Code"`. Detect via
      `osascript -e 'application "Visual Studio Code" is running'` (bundle id
      `com.microsoft.VSCode`).
@@ -51,16 +51,16 @@ The end-to-end flow saying **"chotu"** should drive (no keyboard):
 2. **Start dictation:** emit **Cmd+D** — the VS Code extension's record shortcut
    ("tap or hold to record", verified in-UI) — so the extension's own dictation
    transcribes the prompt into the input box ("fully form the sentence"; visible
-   on screen). chotu does *not* run its own speech-to-text.
-3. **Detect the command from the box (Option A):** while dictation runs, chotu
+   on screen). hey-claude does *not* run its own speech-to-text.
+3. **Detect the command from the box (Option A):** while dictation runs, hey-claude
    watches the box **event-driven** — an `AXObserver` on `kAXValueChangedNotification`
    fires on each transcription update (polling `AXValue` is the fallback; Q12). The
    **trailing command word** is
    both the "done" signal *and* the action — e.g. you say "…retry loop. **Okay
-   send.**". Disambiguated by an `okay`/`chotu` **prefix** or a brief pause (Q11b)
-   so a prompt that legitimately ends in "send" doesn't fire. On match, chotu taps
+   send.**". Disambiguated by an `okay`/`hey-claude` **prefix** or a brief pause (Q11b)
+   so a prompt that legitimately ends in "send" doesn't fire. On match, hey-claude taps
    **Cmd+D to stop dictation**. (Silence timeout still runs as a disarm safety.)
-4. **Strip + act:** the command word was transcribed *into* the box, so chotu first
+4. **Strip + act:** the command word was transcribed *into* the box, so hey-claude first
    **backspaces the trailing command phrase out** (cursor is already at end; AX
    writes don't persist per Q11a) — it must never reach Claude — then:
    - **send** (`okay/ok/sure/send/yes/yeah/go/confirm`) → **Return**
@@ -69,18 +69,18 @@ The end-to-end flow saying **"chotu"** should drive (no keyboard):
    A short ack beep fires before the action. (Confirm + command are fused into the
    one utterance — no separate "okay to send?" prompt.)
 
-**Layer ownership:** bootstrap + confirm-gate = **chotu** (local controller);
+**Layer ownership:** bootstrap + confirm-gate = **hey-claude** (local controller);
 transcription = the **VS Code extension's built-in dictation**; **command
 recognition = reading the input box `AXValue` and string-matching** (Q2/Q10 —
-verified: box is an `AXTextArea`, readable once chotu forces
+verified: box is an `AXTextArea`, readable once hey-claude forces
 `AXManualAccessibility=true` at startup); the Claude *model/agent* is not in this
-control loop. Only "chotu" itself needs a trained wake-word model. See Q7 for how
+control loop. Only "hey-claude" itself needs a trained wake-word model. See Q7 for how
 "sentence done" is detected.
 
 **Verified extension control surface (2026-07-06):** the extension exposes the mic
 as a UI button + the **Cmd+D** keybinding, and **Cmd+Esc** to focus/unfocus — but
 **no command ID or `vscode://` URI to start recording or submit programmatically**.
-So chotu's only ways to "press record" are (a) emit the Cmd+D keystroke, or (b)
+So hey-claude's only ways to "press record" are (a) emit the Cmd+D keystroke, or (b)
 AXPress the mic button via macOS Accessibility. Emitting Cmd+D from the wake-word
 script *is* the "activate via script" model — the keystroke stays swappable in
 config. (The CLI's `/voice` uses Space/`voice:pushToTalk` instead — not applicable
@@ -88,15 +88,16 @@ to the extension.)
 
 ### FR-1 Wake word
 - Idle state listens continuously but takes **no action** until the wake phrase.
-- Wake phrase (working default): **"chotu"** (छोटू, "little helper") — configurable.
+- Wake phrase (working default): **"hey jarvis"** (openWakeWord pretrained); the trained
+  target is **"hey claude"** — configurable via `wake.model` / `wake.phrase`.
 - On wake: audible/visible cue (beep or menu-bar state change) so I know it's armed.
 - **Self-trigger guard:** the wake word is **ignored while dictating/confirming**
-  (see FR-6), so saying "chotu" mid-flow — or "chotu" landing in the dictated
+  (see FR-6), so saying "hey-claude" mid-flow — or "hey-claude" landing in the dictated
   prompt — does not re-arm or recurse.
 
 ### FR-2 Command vocabulary
 Commands are **read from the input box `AXValue` and string-matched** (Q2/Q10) —
-not separate wake words. Only "chotu" is a trained model; "start dictation" is
+not separate wake words. Only "hey-claude" is a trained model; "start dictation" is
 folded into the wake flow (FR-0), so there is **no standalone `start` command**.
 
 | Command | Action | Trigger (string-match on box, or state) |
@@ -135,10 +136,10 @@ folded into the wake flow (FR-0), so there is **no standalone `start` command**.
 
 ### FR-5 Config
 Single config file. Keys:
-- `wake_phrase` (default `chotu`), `mic_device`, detection `threshold`s.
+- `wake_phrase` (default `hey-claude`), `mic_device`, detection `threshold`s.
 - `command_words`: map of action → synonym list (send/cancel/stop/approve/deny) —
   string-matched against the box; extend freely, no retraining.
-- `command_prefix`: optional required prefix before a command word (`okay`/`chotu`)
+- `command_prefix`: optional required prefix before a command word (`okay`/`hey-claude`)
   for disambiguation (Q11b, Option A). Empty = match a bare trailing command word.
 - `disarm_timeout_ms`: silence-while-dictating → disarm to idle (safety; never sends).
 - `target`: app bundle id + workspace path + expected window-title substring
@@ -154,7 +155,7 @@ Explicit states with timeout + error transitions (the happy path is FR-0):
 - **armed** → bootstrap + focus-safety gate (FR-3); on failure → error cue → idle.
   Arm auto-expires to **idle** after a config timeout if nothing follows.
 - **armed** → **dictating** (Cmd+D). Wake word ignored here (FR-1 self-trigger).
-- **dictating** → chotu **observes the box** (`AXObserver` on value-changed,
+- **dictating** → hey-claude **observes the box** (`AXObserver` on value-changed,
   event-driven; polling fallback — Q12); a **trailing command word** (disambiguated,
   Q11b) is the done+action signal → stop dictation (Cmd+D) → **acting**. (Option A:
   command is read from the box, not heard separately.)
@@ -201,7 +202,7 @@ durations — get settled by **data from real sessions**. Capture it locally.
   cue and proceed when ready.
 - **NFR-5 macOS-native:** Apple Silicon, current macOS. No other OS in scope.
 - **NFR-6 Simple install:** documented setup; ideally no paid/keyed services.
-- **NFR-7 Permissions (TCC):** chotu is a **new process** and needs its own
+- **NFR-7 Permissions (TCC):** hey-claude is a **new process** and needs its own
   **Microphone** (wake-word listening) and **Accessibility** (keystrokes + reading
   the box) grants on first run — and it must set `AXManualAccessibility=true` on VS
   Code at startup (Q10). Document these grants; they're the main install friction.
@@ -212,7 +213,7 @@ durations — get settled by **data from real sessions**. Capture it locally.
 
 - Action layer = **keystrokes** (decided).
 - Location = `~/Documents/GitHub/hey-claude`, local git (decided).
-- Recognition = **one trained wake word ("chotu") + read-the-box string-matching
+- Recognition = **one trained wake word ("hey-claude") + read-the-box string-matching
   for all commands** (decided; Q2/Q10). No per-command wake words, no general ASR.
   Fully offline, no signup. (Supersedes the earlier "each command is its own wake
   word" leaning, which became unnecessary once box-reading was proven.)
@@ -245,7 +246,7 @@ durations — get settled by **data from real sessions**. Capture it locally.
 - Non-macOS platforms.
 - Multi-user / distribution / packaging as a product.
 - Free-form dictation of the *prompt itself* — the VS Code extension's own
-  dictation (Cmd+D) does that; chotu only starts/stops it and reads the result.
+  dictation (Cmd+D) does that; hey-claude only starts/stops it and reads the result.
 - Controlling apps other than Claude Code.
 - **Terminal Claude Code** — extension only for v1 (terminal dictation uses a
   different binding; would need its own keymap and focus/detection logic).
@@ -254,37 +255,37 @@ durations — get settled by **data from real sessions**. Capture it locally.
 ## 8. Open questions
 
 - **Q1 Engine:** ~~DECIDED — openWakeWord~~ (offline, no key, coexists with
-  dictation; train "chotu" via synthetic-data pipeline). `SFSpeechRecognizer` kept
+  dictation; train "hey-claude" via synthetic-data pipeline). `SFSpeechRecognizer` kept
   as the Apple-native fallback (see below).
-  - Note: **"chotu"** is a custom phrase — not in openWakeWord's pre-built set, so
+  - Note: **"hey-claude"** is a custom phrase — not in openWakeWord's pre-built set, so
     we must generate a model for it via its synthetic-data training pipeline
     (piper TTS → augment → train). A 2-syllable word trains cleanly; budget one
     pass to tune the detection threshold against false triggers. On Porcupine,
     a custom keyword needs the (free) Picovoice console + key.
   - **Apple-native options evaluated (mostly worse fit for always-on + dictation):**
     - *Siri / "Hey Siri" wake:* can't set a custom wake word or intercept Siri; only
-      "Hey Siri → run Shortcut 'chotu'" — two-part prefix, **cloud** (breaks NFR-1),
+      "Hey Siri → run Shortcut 'hey-claude'" — two-part prefix, **cloud** (breaks NFR-1),
       chime + latency (breaks NFR-4). No good for the `send`/`cancel` loop.
     - *macOS Voice Control:* on-device, custom commands, **zero training** — but
       **always-listening and parses all speech as commands → conflicts with the
       extension's dictation** and takes over the UI. Architecturally incompatible.
     - *`SFSpeechRecognizer` (on-device):* the one viable Apple path — continuous
-      on-device ASR, **no wake model to train**; string-match "chotu"/commands
+      on-device ASR, **no wake model to train**; string-match "hey-claude"/commands
       ourselves. Cost: heavier idle CPU/battery than a purpose-built wake engine
       (NFR-2), and must be paused during dictation to avoid contention.
     - **Verdict:** openWakeWord/Porcupine fire *only* on the phrase → low-power,
-      always-on, and **coexist with dictation** (chotu reads the box, doesn't
+      always-on, and **coexist with dictation** (hey-claude reads the box, doesn't
       recognize). Keep them as primary; `SFSpeechRecognizer` is the Apple-native
       fallback if avoiding a trained model outweighs the idle-cost hit.
 - **Q2 Command recognition:** ~~RESOLVED — read commands from the input box~~
-  (Q10 proved the box is readable). Architecture: **only "chotu" needs a trained
+  (Q10 proved the box is readable). Architecture: **only "hey-claude" needs a trained
   wake-word model** (to arm). All commands are **read from the box `AXValue` and
   string-matched** — so the extension's dictation does recognition, natural
   phrasing expands with zero new models, and the FR-0 yes/no synonym lists work as
   plain string matches from day one. No per-command wake-word models, no separate
   ASR. Command words are dictated then **stripped** before send (Option A, Q11b).
 - **Q3 Activation model:** ~~mostly RESOLVED by FR-6~~ — **strict wake-then-listen**:
-  "chotu" arms, then the state machine drives dictate→confirm with timeouts back to
+  "hey-claude" arms, then the state machine drives dictate→confirm with timeouts back to
   idle. Commands are read from the box (not always-on phrases), so the old
   "always-listening per command" option is moot. Only tunable left: the arm/confirm
   timeout durations.
@@ -308,12 +309,12 @@ durations — get settled by **data from real sessions**. Capture it locally.
   conflict. (Residual, minor: the *fully-closed* panel case — "unfocused" was
   tested, "closed" not explicitly; if Cmd+Esc doesn't reopen a closed view, add a
   one-time "Focus Claude Input" command call. Not a v1 blocker.)
-- **Q10 Can chotu read the Claude input box?** ~~RESOLVED — YES~~ (tested
+- **Q10 Can hey-claude read the Claude input box?** ~~RESOLVED — YES~~ (tested
   2026-07-06). Chromium's a11y tree is off by default (window = one opaque
   `AXGroup`), but forcing **`AXManualAccessibility=true`** on the Electron process
   builds it: the input is then an **`AXTextArea` whose `AXValue` is fully
   readable** (probe returned `[hello world]` verbatim). Caveats baked into the
-  design: (1) chotu must **set the flag at startup** — it's per-process and resets
+  design: (1) hey-claude must **set the flag at startup** — it's per-process and resets
   on VS Code relaunch; (2) the webview re-renders constantly so AX refs go stale in
   ms — **read atomically with a retry loop**; (3) read the **focused** element, so
   Cmd+Esc (focus box) must precede the read. This makes box-reading the primary
@@ -322,22 +323,22 @@ durations — get settled by **data from real sessions**. Capture it locally.
   2026-07-06). The attribute reports `settable=true`, but writes **don't persist** —
   the box is a React-controlled input that re-renders from its own state and
   ignores AX writes (set to a test string → readback was the empty placeholder).
-  **Implication:** chotu edits the box with **keystrokes** (Cmd+A + retype, or
+  **Implication:** hey-claude edits the box with **keystrokes** (Cmd+A + retype, or
   backspace-to-strip a trailing command word), not AX `set`. **Keystroke
   write+modify verified live** (2026-07-06): typed "abc def" → backspaced 3 →
-  AX read confirmed `[abc ]`. So chotu has **full read (AX) + write (keystroke)**
+  AX read confirmed `[abc ]`. So hey-claude has **full read (AX) + write (keystroke)**
   control of the box — enabling not just command-stripping but composing text:
   **voice snippets/macros** (keyword → type a canned block), dictation edits, or
   cursor inserts. (Scope for v1 TBD — see note below.)
   - **Sub-finding — placeholder-as-empty:** an empty box returns its **placeholder**
-    as `AXValue` (e.g. `Queue another message…`, varies by state), not `""`. chotu's
+    as `AXValue` (e.g. `Queue another message…`, varies by state), not `""`. hey-claude's
     "box empty? / did dictation produce text?" check must treat known placeholder
     strings as empty (or read `AXPlaceholderValue` separately — verify at build).
 - **Q11b Keeping command words out of the prompt** — ~~RESOLVED: Option A~~.
   Dictation is on when you say `send`/`stop`/`cancel`, so they get transcribed into
-  the box; chotu **detects the trailing command token and backspaces it out** before
-  acting, so it never reaches Claude ("chotu" is usually safe — spoken before
-  dictation starts). Disambiguation via `command_prefix` (`okay`/`chotu`) or a
+  the box; hey-claude **detects the trailing command token and backspaces it out** before
+  acting, so it never reaches Claude ("hey-claude" is usually safe — spoken before
+  dictation starts). Disambiguation via `command_prefix` (`okay`/`hey-claude`) or a
   standalone-final-token-after-pause; `stop`/re-dictate recovers a mis-fire. Confirm
   and command fuse into one utterance ("okay send"); one trained model total.
   - *Fallback B (if A false-fires too much):* dictate only the prompt → pause → stop
@@ -359,11 +360,11 @@ durations — get settled by **data from real sessions**. Capture it locally.
 ## 9. Acceptance (v1 "done")
 
 - [ ] Saying the wake phrase arms the tool with a clear cue.
-- [ ] Full happy path (FR-0) works cold: "chotu" → VS Code + geofast workspace up
+- [ ] Full happy path (FR-0) works cold: "hey-claude" → VS Code + geofast workspace up
       → Claude focused → dictate → confirm → send, no keyboard.
-- [ ] chotu reads the dictated text from the box (`AXValue`) and matches the
+- [ ] hey-claude reads the dictated text from the box (`AXValue`) and matches the
       configured command words; empty/placeholder box handled correctly.
-- [ ] Focus-safety gate holds: with a *non*-VS-Code app frontmost, chotu raises VS
+- [ ] Focus-safety gate holds: with a *non*-VS-Code app frontmost, hey-claude raises VS
       Code (or aborts with a cue) and never injects into the wrong app.
 - [ ] Confirm state never auto-sends on silence; `stop` cancels cleanly.
 - [ ] Wake word said mid-dictation (or transcribed into the prompt) does not recurse.
@@ -383,9 +384,9 @@ Not in v1, but proven feasible by the 2026-07-06 tests — the read (AX) + write
 - **Natural-language commands.** Beyond fixed words, match natural phrasing from the
   box text ("okay go ahead and send that") — string/intent matching on `AXValue`,
   no new models (Option A's expansion path; Q2/Q11b). Grow the vocab in config.
-- **Voice snippets / macros.** A keyword → chotu **types a canned block** (prompt
+- **Voice snippets / macros.** A keyword → hey-claude **types a canned block** (prompt
   preamble, a file path, boilerplate) into the box via keystrokes (write verified,
-  Q11a). Turns chotu into a voice text-expander for common prompts.
+  Q11a). Turns hey-claude into a voice text-expander for common prompts.
 - **In-place edits before send.** "scratch the last line", "append …", correct a
   dictation slip — read box, recompute, keystroke the delta.
 - **Spoken readback / confirm.** TTS the box back ("send: add a retry loop?") for

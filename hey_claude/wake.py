@@ -1,14 +1,14 @@
 """Wake-word listener (openWakeWord). Runs on its own thread; heavy imports are
 deferred so this module imports without openwakeword/sounddevice present.
 
-Custom "chotu" needs a trained model (see scripts/train_chotu.md). Until then it
+Custom "hey-claude" needs a trained model (see scripts/train-wake-word.md). Until then it
 falls back to a pretrained phrase (wake.pretrained_fallback) so the daemon runs
 end-to-end. on_wake is called from THIS thread — the runtime enqueues onto the
 main run-loop for thread safety (see __main__).
 
-Logs via the shared `chotu` logger (chotu/log.py): INFO for model/stream lifecycle,
+Logs via the shared `hey-claude` logger (hey_claude/log.py): INFO for model/stream lifecycle,
 DEBUG for the per-~2s heartbeat + each wake candidate, CRITICAL if the thread dies
-(the daemon goes deaf). Turn on DEBUG with --debug or CHOTU_DEBUG=1.
+(the daemon goes deaf). Turn on DEBUG with --debug or HEY_CLAUDE_DEBUG=1.
 """
 from __future__ import annotations
 

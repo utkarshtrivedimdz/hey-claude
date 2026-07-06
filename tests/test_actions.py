@@ -3,9 +3,9 @@
 Sequencing (ACTING transition, telemetry, correction window) is tested in test_state.py;
 here we assert only *how* each command is executed over fake keys/ax ports.
 """
-from chotu.actions import Actions, ActionOutcome
-from chotu.commands import from_config, Fixups
-from chotu.config import Config
+from hey_claude.actions import Actions, ActionOutcome
+from hey_claude.commands import from_config, Fixups
+from hey_claude.config import Config
 from tests.fakes import FakeKeys, FakeAX
 
 

@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-chotu = "chotu.__main__:main"
+hey-claude = "hey_claude.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

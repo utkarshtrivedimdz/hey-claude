@@ -2,8 +2,8 @@
 import json
 from datetime import datetime, timezone
 
-from chotu.config import Config
-from chotu.telemetry import Telemetry
+from hey_claude.config import Config
+from hey_claude.telemetry import Telemetry
 
 
 def _tel(tmp_path, mode):

@@ -51,7 +51,7 @@ For a repo that claims "every mechanism verified," the UML is the least verified
 possible and nothing logs state changes — despite telemetry-driven tuning being the
 whole point.
 
-**Changes** ([state.py](../chotu/state.py)):
+**Changes** ([state.py](../hey_claude/state.py)):
 - Add `_transition(self, new: S, reason: str)`: assert `(self.state → new)` is in a
   declared `LEGAL: dict[S, set[S]]` table; on illegal, log an error event and (test builds)
   raise; centralize the state-change beep here.
@@ -70,12 +70,12 @@ still ends in the same terminal state and now emits the expected transition sequ
 
 ## Phase 2 — Extract the dispatch/actions layer (make `acting` real)
 
-**Gap:** `_dispatch` (~45 lines, [state.py:107-150](../chotu/state.py#L107-L150)) mixes
+**Gap:** `_dispatch` (~45 lines, [state.py:107-150](../hey_claude/state.py#L107-L150)) mixes
 command semantics, fixups, keystroke choreography, telemetry, and the correction window
 inside the "pure" state machine.
 
 **Changes:**
-- New `chotu/actions.py`: `Actions.perform(match, box_text) -> ActionOutcome`, holding the
+- New `hey_claude/actions.py`: `Actions.perform(match, box_text) -> ActionOutcome`, holding the
   send / cancel / stop keystroke choreography + fixup rewrite-vs-backspace decision. Takes
   injected `keys`/`ax` ports — still fake-testable, but out of the state machine.
 - `state.py` gains a real `ACTING` transition: `on_box_change` match → `_transition(ACTING)`
@@ -95,11 +95,11 @@ to verified. **Risk:** medium (touches the hottest path). **Depends on:** Phase 
 ## Phase 3 — Box-observation robustness (stale AX refs)
 
 **Gap:** the AXObserver binds one focused-element ref captured at dictation start
-([ax.py:70-88](../chotu/ax.py#L70-L88)); ax.py's own header says webview re-renders make
+([ax.py:70-88](../hey_claude/ax.py#L70-L88)); ax.py's own header says webview re-renders make
 refs stale. A mid-turn re-render silently stops `AXValueChanged`; only the silence timeout
 catches it. The advertised `reregister_on_focus()` doesn't exist.
 
-**Changes** ([ax.py](../chotu/ax.py)):
+**Changes** ([ax.py](../hey_claude/ax.py)):
 - Implement `reregister_on_focus()`: on a focus-change notification (or on read failure),
   re-resolve `AXFocusedUIElement` and rebind the observer to the new ref.
 - Add a `tick()`-driven reconciliation in `state.py`: if the observer has delivered nothing
@@ -119,10 +119,10 @@ resume; assert no re-register storm when refs are healthy.
 ## Phase 4 — Premature-send settle window
 
 **Gap:** `match` fires on the first `on_box_change` whose trailing tokens satisfy a command
-([state.py:86-88](../chotu/state.py#L86-L88)). A partial transcription reading "…okay send"
+([state.py:86-88](../hey_claude/state.py#L86-L88)). A partial transcription reading "…okay send"
 that would become "…okay send me the log" dispatches early.
 
-**Changes** ([state.py](../chotu/state.py)):
+**Changes** ([state.py](../hey_claude/state.py)):
 - On a match, don't dispatch immediately: record `pending_match` + timestamp, and only
   dispatch on the next `tick()` if the box text is unchanged since the match (stable for one
   ~120 ms tick, tunable `settle_ms`). Any further `on_box_change` that changes the trailing
@@ -144,7 +144,7 @@ fixed-timer liveness problem, and a second non-box health signal. This is the fe
 motivated the whole thread; it attacks three gaps at once.
 
 **Changes:**
-- [ax.py](../chotu/ax.py): `read_button_state() -> "live" | "idle" | "unknown"`. Locate the
+- [ax.py](../hey_claude/ax.py): `read_button_state() -> "live" | "idle" | "unknown"`. Locate the
   `Voice dictation` AXButton once at dictation start (cache the ref); classify by
   `AXDescription in {"Stop recording"}` OR a `recording*` entry in `AXDOMClassList`
   (match loosely — the hashed suffix is extension-internal). `unknown` when the button
@@ -172,12 +172,12 @@ blue; grey button is a definite off-ramp; §4 markers flip to verified.
 
 ---
 
-## Phase 6 — `chotu --doctor` self-test (loud failure on extension churn)
+## Phase 6 — `hey-claude --doctor` self-test (loud failure on extension churn)
 
 **Gap:** hardcoded keycodes, textarea assumption, button description/DOM hashes — all break
 silently on VS Code / Claude-extension updates and degrade to timeouts.
 
-**Changes** ([__main__.py](../chotu/__main__.py)):
+**Changes** ([__main__.py](../hey_claude/__main__.py)):
 - Add `--doctor`: assert and report {VS Code running, focus gate passes, `AXManualAccessibility`
   sticks, focused element is the expected textarea, `Voice dictation` button located, button
   classifies as `idle` at rest}. Non-zero exit + human-readable diffs when a contract breaks.
@@ -194,9 +194,9 @@ degrading at runtime. **Risk:** low. **Depends on:** Phase 5 (button locator). *
 ## Phase 7 — Smaller cleanups (fold into an adjacent phase's PR)
 
 - **Config schema:** replace the `getattr(cfg, "fixups", None)` bag-access
-  ([commands.py:126](../chotu/commands.py#L126)) with an explicit typed field + default;
+  ([commands.py:126](../hey_claude/commands.py#L126)) with an explicit typed field + default;
   audit `config.py` for other optional-by-`getattr` keys.
-- **Wake enqueue comment:** note at [wake.py:93](../chotu/wake.py#L93) that enqueuing on
+- **Wake enqueue comment:** note at [wake.py:93](../hey_claude/wake.py#L93) that enqueuing on
   `score >= log_floor` (0.3, not `threshold`) is deliberate near-miss logging, and `tick()`
   drains sub-threshold events by design.
 - **`disarm_s` already bumped 10→22** in the tracked `config.toml` (live user config is 30);
