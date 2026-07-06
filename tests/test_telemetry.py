@@ -60,3 +60,14 @@ def test_wake_and_correction_records(tmp_path):
     assert recs[0]["event"] == "wake" and recs[0]["accepted"] is True
     assert recs[2]["event"] == "correction" and recs[2]["turn_id"] == tid
     assert recs[2]["within_ms"] == 2400 and recs[2]["inferred"] == "misfire"
+
+
+def test_state_transition_record(tmp_path):
+    tel, path = _tel(tmp_path, "full")
+    tel.log_transition("armed", "dictating", "dictation_started", 1234.5678)
+    tel.log_transition("idle", "dictating", "bogus", 1235.0, illegal=True)
+    recs = _read(path)
+    assert recs[0]["event"] == "state_transition"
+    assert (recs[0]["from"], recs[0]["to"], recs[0]["reason"]) == ("armed", "dictating", "dictation_started")
+    assert recs[0]["mono"] == 1234.568 and recs[0]["illegal"] is False
+    assert recs[1]["illegal"] is True

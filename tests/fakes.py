@@ -70,6 +70,7 @@ class FakeTelemetry:
         self.wakes: list = []
         self.turns: list = []
         self.corrections: list = []
+        self.transitions: list = []
         self._n = 0
 
     def log_wake(self, score, threshold, accepted, followed_through=None, note=None):
@@ -85,6 +86,10 @@ class FakeTelemetry:
     def log_correction(self, turn_id, signal, within_ms, inferred="misfire"):
         self.corrections.append(dict(turn_id=turn_id, signal=signal,
                                      within_ms=within_ms, inferred=inferred))
+
+    def log_transition(self, frm, to, reason, mono, illegal=False):
+        self.transitions.append(dict(frm=frm, to=to, reason=reason,
+                                     mono=mono, illegal=illegal))
 
 
 class FakeSystem:

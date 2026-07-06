@@ -108,3 +108,10 @@ class Telemetry:
             "event": "correction", "turn_id": turn_id, "signal": signal,
             "within_ms": int(within_ms), "inferred": inferred,
         })
+
+    def log_transition(self, frm, to, reason, mono, illegal=False) -> None:
+        # State-change trace (FR-6 / HARDENING-PLAN Phase 1). Cheap: ~3 records/turn.
+        self._emit({
+            "event": "state_transition", "from": frm, "to": to, "reason": reason,
+            "mono": round(float(mono), 3), "illegal": bool(illegal),
+        })

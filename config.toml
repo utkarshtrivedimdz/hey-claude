@@ -43,7 +43,9 @@ title_substr = "your-project (Workspace)"               # a substring unique to 
 
 [timeouts]
 arm_s = 8.0            # max time armed before auto-disarm
-disarm_s = 10.0        # silence-while-dictating → disarm (never auto-sends)
+disarm_s = 22.0        # silence-while-dictating → disarm (never auto-sends). Resets on every box
+                       # change, so this is pause-tolerance, not a total cap. Bumped 10→22 to
+                       # survive mid-prompt thinking pauses; real fix is the VAD off-ramp (BACKLOG).
 correction_window_ms = 5000
 
 [telemetry]

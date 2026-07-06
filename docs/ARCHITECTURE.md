@@ -1,7 +1,10 @@
 # hey-claude — Architecture & Design
 
 Diagrams and the concrete data model behind [`REQUIREMENTS.md`](REQUIREMENTS.md) /
-[`BUILD-PLAN.md`](BUILD-PLAN.md). Every mechanism here is verified (2026-07-06 tests).
+[`BUILD-PLAN.md`](BUILD-PLAN.md). Unmarked elements are **built and verified**
+(2026-07-06 tests). Elements tagged **«Phase N»** are *target state* from the
+[`HARDENING-PLAN.md`](HARDENING-PLAN.md) — designed, not yet built — so every
+diagram box/edge maps to either current code or a named phase.
 Diagrams are Mermaid (render in VS Code with the Mermaid extension, and on GitHub).
 
 ---
@@ -15,8 +18,9 @@ graph TD
     W["wake.py<br/>openWakeWord"]
     SM["state.py<br/>state machine (FR-6)"]
     BS["bootstrap.py<br/>open + focus-safety gate"]
+    SYS["system.py<br/>frontmost / launch / raise"]
     CMD["commands.py<br/>match / disambiguate / strip"]
-    AX["ax.py<br/>AX read + AXObserver"]
+    AX["ax.py<br/>AX read + AXObserver<br/>+ mic-button state «Phase 5»"]
     KEYS["keys.py<br/>keystroke primitives"]
     TEL["telemetry.py<br/>JSONL logger"]
     CFG["config.py"]
@@ -30,14 +34,15 @@ graph TD
   SM --> BS
   SM --> CMD
   SM --> TEL
-  CMD --> AX
-  CMD --> KEYS
-  BS --> KEYS
-  BS --> AX
+  SM --> AX
+  SM --> KEYS
+  BS --> SYS
   AX <-->|"AXValue / AXObserver<br/>(needs AXManualAccessibility)"| VSC
   KEYS -->|"Cmd+D/Esc, type, ⌫, ⏎"| VSC
+  SYS -->|"NSWorkspace: launch / raise / frontmost"| VSC
   CFG -.-> W
   CFG -.-> SM
+  CFG -.-> BS
   CFG -.-> CMD
   CFG -.-> TEL
   TEL --> LOG
@@ -47,9 +52,10 @@ graph TD
   classDef store fill:#d9edf7,stroke:#3a87ad,color:#000;
 ```
 
-`ax.py` and `keys.py` are the only modules that touch VS Code — everything else is
-pure logic, which keeps the state machine and command logic unit-testable without a
-running editor.
+`ax.py`, `keys.py`, and `system.py` are the only modules that touch VS Code —
+everything else is pure logic, which keeps the state machine and command logic
+unit-testable without a running editor. `state.py` owns the keystroke/AX dispatch
+today; Phase 2 extracts it into `actions.py` (still I/O-free-tested via ports).
 
 ---
 
@@ -58,48 +64,61 @@ running editor.
 ```mermaid
 classDiagram
   class Daemon {
-    +run()
+    +run(cfg, once)
   }
   class WakeListener {
-    +threshold: float
-    +start(on_wake)
-    -_score_loop()
+    +run()
+    +stop()
   }
   class StateMachine {
-    +state: State
+    +state: S
     +on_wake(score)
     +on_box_change(text)
-    +tick() timeouts
-    -_to(state)
+    +tick()
+    -_transition(new, reason)
+    -_dispatch(match, text)
+  }
+  class Actions {
+    +perform(match, box_text) ActionOutcome
   }
   class Bootstrap {
-    +ensure_ready() bool
-    +focus_safe() bool
-    -_raise_vscode()
+    +ensure_ready() BootstrapResult
+    -_focus_ok() bool
+    -_title_active() bool
   }
   class AX {
     +read_box() str
-    +observe(element, on_change)
-    +reregister_on_focus()
+    +start_observing(on_change) bool
+    +stop_observing()
     +set_manual_a11y()
+    +read_button_state() live|idle|unknown
+    +reregister_on_focus()
   }
   class Keys {
     +cmd_d()
     +cmd_esc()
-    +type(s: str)
-    +backspace(n: int)
+    +esc()
+    +type_text(s)
+    +backspace(n)
     +ret()
-    +clear() cmdA_delete
+    +clear()
+  }
+  class System {
+    +frontmost_bundle_id() str
+    +window_title() str
+    +is_app_running() bool
+    +launch_app()
+    +open_path(path)
+    +raise_app()
   }
   class Commands {
     +match(text) Match
-    +strip_len(text, m) int
-    +dispatch(m)
   }
   class Telemetry {
-    +log_wake(rec)
-    +log_turn(rec)
+    +log_wake(...)
+    +log_turn(...) turn_id
     +log_correction(turn_id, signal, dt)
+    +log_transition(from, to, reason)
   }
   class Config {
     +wake_phrase
@@ -114,15 +133,25 @@ classDiagram
   StateMachine --> Bootstrap
   StateMachine --> Commands
   StateMachine --> Telemetry
-  Commands --> AX
-  Commands --> Keys
-  Bootstrap --> Keys
-  Bootstrap --> AX
+  StateMachine --> AX
+  StateMachine --> Keys
+  StateMachine ..> Actions
+  Bootstrap --> System
   WakeListener ..> Config
   StateMachine ..> Config
   Commands ..> Config
   Telemetry ..> Config
 ```
+
+**Not yet built** (target state — see [`HARDENING-PLAN.md`](HARDENING-PLAN.md)):
+- `class Actions` + `StateMachine..>Actions` — **Phase 2**. Today the dispatch/keystroke
+  choreography lives inline in `StateMachine._dispatch`; Phase 2 extracts it to `actions.py`.
+- `AX.read_button_state` — **Phase 5** (mic-button liveness signal).
+- `AX.reregister_on_focus` — **Phase 3** (stale-AX-ref recovery).
+- `StateMachine.tick()` today runs only the **backstop timeouts** (arm/silence); the
+  liveness gate it will drive is **Phase 5**.
+
+`StateMachine._transition` and `Telemetry.log_transition` are **built** (Phase 1).
 
 ---
 
@@ -145,25 +174,31 @@ sequenceDiagram
   SM->>T: log_wake(accepted, score)
   Note over SM: idle → armed
   SM->>BS: ensure_ready()
-  BS->>VS: open -n -a / raise
-  BS->>BS: focus_safe()? bundle+title
-  BS->>K: Cmd+Esc (focus Claude input)
+  BS->>VS: system.py: launch / open / raise
+  BS->>BS: _focus_ok()? bundle+title
+  SM->>K: Cmd+Esc (focus Claude input)
   SM->>K: Cmd+D (start dictation)
   Note over SM: armed → dictating (wake now ignored)
-  SM->>AX: observe(textarea, on_change)
+  SM->>AX: start_observing(on_change)
   AX->>VS: AXObserver(AXValueChanged)
+  AX->>VS: locate + cache Voice-dictation button «Phase 5»
   U->>VS: "add retry loop. okay send"
   loop each transcription chunk
     VS-->>AX: value changed
     AX-->>SM: on_box_change(text)
     SM->>SM: trailing token a command? prefix ok?
   end
-  Note over SM: "okay send" matched → dictating → acting
+  loop every tick — liveness gate «Phase 5»
+    SM->>AX: read_button_state()
+    AX-->>SM: recording (blue) → keep armed, no countdown
+    Note over SM: grey → OS ended dictation → DISARM (never sends)<br/>unreadable → fall back to silence timer
+  end
+  Note over SM: "okay send" matched → dictating → acting «Phase 2»
   SM->>K: Cmd+D (stop dictation)
   SM->>K: backspace × len("okay send")
   SM->>K: Return
   SM->>T: log_turn(sent, latency, pre/post-strip)
-  Note over SM: acting → idle
+  Note over SM: acting → idle «Phase 2» (today: dictating → idle)
 ```
 
 ## 3a. Runtime sequence — cancel / mis-fire (implicit feedback)
@@ -188,6 +223,18 @@ sequenceDiagram
 
 ## 4. State machine (FR-6)
 
+**Liveness signal:** while `dictating`, chotu tracks VS Code's own **Voice-dictation
+button** state (its `AXDescription` flips `Voice dictation` ⇄ `Stop recording`; a
+`recording_*` DOM class appears — both verified readable over AX, 2026-07-06). The
+button is the OS dictation session's ground truth, so it — not a fixed clock — decides
+when the session is still live. Blue ⇒ stay armed through thinking pauses; grey ⇒ the
+OS ended dictation ⇒ off-ramp. The `disarm_s` silence timer and a hard `max_arm`
+ceiling remain only as a **fallback backstop** (button unreadable — e.g. user tabbed
+away — or a stale matcher after an extension update). Status: capability verified;
+wiring into `tick()` is [`HARDENING-PLAN.md`](HARDENING-PLAN.md) **Phase 5**. Until it
+lands, `tick()` runs the silence/arm timeouts only — the button edges below are marked
+**«Phase 5»**, and the `acting` state is **«Phase 2»**.
+
 ```mermaid
 stateDiagram-v2
   [*] --> idle
@@ -195,12 +242,17 @@ stateDiagram-v2
   armed --> idle: bootstrap fail / focus-gate abort / arm-timeout
   armed --> dictating: Cmd+Esc → Cmd+D
   dictating --> dictating: box value-changed (observe)
-  dictating --> acting: trailing command word (disambiguated)
-  dictating --> idle: silence timeout — DISARM, never sends
-  acting --> idle: strip + dispatch (send / cancel / stop)
+  dictating --> dictating: «Phase 5» mic button = recording (blue)<br/>session live — no countdown
+  dictating --> idle: silence / arm-timeout backstop — DISARM, never sends
+  dictating --> idle: trailing command word → strip + dispatch (send / cancel / stop)
+  dictating --> acting: «Phase 2» command match (ACTING extracts dispatch)
+  acting --> idle: «Phase 2» Actions.perform → strip + dispatch
+  dictating --> idle: «Phase 5» mic button → idle / max-arm backstop
   note right of dictating
-    wake word IGNORED here
-    (self-trigger guard, FR-1)
+    liveness = Voice-dictation button state
+    (AXDescription / recording_* DOM class).
+    silence timer + max-arm = fallback only.
+    wake word IGNORED here (self-trigger guard, FR-1).
   end note
 ```
 
@@ -225,6 +277,10 @@ flowchart TD
   ACT -- stop --> X1["Esc"] --> L
   L --> I["idle"]
 ```
+
+This flow is accurate to today's inline `StateMachine._dispatch`. **Phase 2** relocates
+the `STOP → dispatch → log_turn` subgraph into `actions.py` (`Actions.perform`); the flow
+itself is unchanged, only its home module.
 
 ---
 
@@ -259,7 +315,7 @@ Three event types share a common envelope. `schema` lets us evolve the format.
 |---|---|---|
 | `schema` | int | format version (start `1`) |
 | `ts` | string | ISO-8601 UTC, ms precision |
-| `event` | enum | `wake` \| `turn` \| `correction` |
+| `event` | enum | `wake` \| `turn` \| `correction` \| `state_transition` |
 | `session_id` | string | per daemon start (groups a couch session) |
 
 **`wake`** — every wake decision, *including near-misses & false accepts*
@@ -293,6 +349,16 @@ Near-misses (below trigger but above a `log_floor`) are logged with
 ```
 Rule: a `stop`/`cancel`/`scratch` (or an immediate re-`chotu` redo) within
 `correction_window_ms` of a `sent` turn ⇒ that turn was probably a mistake.
+
+**`state_transition`** — every `IDLE`/`ARMED`/`DICTATING` change, emitted by the single
+`_transition` chokepoint (HARDENING-PLAN Phase 1). `illegal:true` flags a transition not
+in the declared legal table (a bug); in test builds it also raises.
+```json
+{ "schema":1, "ts":"2026-07-06T21:03:10.140Z", "event":"state_transition", "session_id":"s_8f2",
+  "from":"armed", "to":"dictating", "reason":"dictation_started", "mono":1234.56, "illegal":false }
+```
+This is the state-trace the tuning loop previously lacked — arm/disarm/dispatch timing
+and any illegal transition are now visible per session.
 
 ### 6.3 Redaction (`store_prompt_text`)
 `box_pre_strip` / `box_post_strip` are the only sensitive fields. The config knob

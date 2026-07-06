@@ -6,28 +6,17 @@ falls back to a pretrained phrase (wake.pretrained_fallback) so the daemon runs
 end-to-end. on_wake is called from THIS thread — the runtime enqueues onto the
 main run-loop for thread safety (see __main__).
 
-Set CHOTU_WAKE_DEBUG=1 to log a per-~2s heartbeat (chunk count + max score) and
-any wake-thread crash to ~/Library/Logs/hey-claude/wake-debug.log.
+Logs via the shared `chotu` logger (chotu/log.py): INFO for model/stream lifecycle,
+DEBUG for the per-~2s heartbeat + each wake candidate, CRITICAL if the thread dies
+(the daemon goes deaf). Turn on DEBUG with --debug or CHOTU_DEBUG=1.
 """
 from __future__ import annotations
 
-import os
+import logging
 import time
-import traceback
-from pathlib import Path
 from typing import Callable
 
-_DEBUG = os.environ.get("CHOTU_WAKE_DEBUG") == "1"
-_DBG_PATH = Path("~/Library/Logs/hey-claude/wake-debug.log").expanduser()
-
-
-def _dbg(msg: str) -> None:
-    try:
-        _DBG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _DBG_PATH.open("a") as f:
-            f.write(f"{time.time():.1f} {msg}\n")
-    except OSError:
-        pass
+log = logging.getLogger(__name__)
 
 
 class WakeListener:
@@ -60,7 +49,7 @@ class WakeListener:
 
         try:
             self._load()
-            _dbg(f"model loaded: key={self._key} fw={self.cfg.wake_inference_framework}")
+            log.info("wake model loaded: key=%s framework=%s", self._key, self.cfg.wake_inference_framework)
             CHUNK = 1280  # 80 ms @ 16 kHz — openWakeWord's frame size
             # Capture in a real-time callback that only buffers → the queue absorbs
             # bursty Bluetooth delivery so predict() (56x realtime) never causes overflow.
@@ -77,7 +66,8 @@ class WakeListener:
                 samplerate=16000, channels=1, dtype="int16",
                 blocksize=CHUNK, device=self.cfg.mic_device, callback=_cb,
             ):
-                _dbg(f"stream open (callback): device={self.cfg.mic_device} thr={self.cfg.wake_threshold}")
+                log.info("mic stream open (callback): device=%s threshold=%.2f",
+                         self.cfg.mic_device, self.cfg.wake_threshold)
                 while not self._stop:
                     try:
                         data = q.get(timeout=0.5)
@@ -86,14 +76,19 @@ class WakeListener:
                     audio = np.frombuffer(data, dtype="int16")
                     score = float(self._model.predict(audio).get(self._key, 0.0))
                     mx, cnt = max(mx, score), cnt + 1
-                    if _DEBUG and time.time() - hb > 2.0:
-                        _dbg(f"heartbeat chunks={cnt} max_score={mx:.3f} overflows={ovf[0]} "
-                             f"qsize={q.qsize()} rms={int(np.abs(audio).mean())}")
-                        hb, mx, cnt, ovf[0] = time.time(), 0.0, 0, 0
+                    if ovf[0]:
+                        log.warning("mic input overflow ×%d — Bluetooth burst / CPU stall", ovf[0])
+                        ovf[0] = 0
+                    if time.time() - hb > 2.0:
+                        log.debug("heartbeat chunks=%d max_score=%.3f qsize=%d rms=%d",
+                                  cnt, mx, q.qsize(), int(np.abs(audio).mean()))
+                        hb, mx, cnt = time.time(), 0.0, 0
                     if score >= self.cfg.wake_log_floor:
+                        log.debug("wake candidate score=%.3f (floor=%.2f, thr=%.2f) → enqueue",
+                                  score, self.cfg.wake_log_floor, self.cfg.wake_threshold)
                         self.on_wake(score)
         except Exception:
-            _dbg("WAKE THREAD CRASHED:\n" + traceback.format_exc())
+            log.critical("wake thread crashed — daemon is now DEAF to the wake word", exc_info=True)
 
     def stop(self) -> None:
         self._stop = True

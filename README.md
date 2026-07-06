@@ -59,6 +59,23 @@ python -m chotu
 launchctl load ~/Library/LaunchAgents/com.hey-claude.chotu.plist
 ```
 
+## Debug logging
+
+chotu streams a human-readable log of what it's doing — wake → arm → dictate →
+sent/cancel/timeout — via the five standard levels (DEBUG/INFO/WARNING/ERROR/CRITICAL).
+It goes to **stderr** and to a rolling file you can read after a run:
+
+```bash
+python -m chotu --debug        # verbose DEBUG (every keystroke, box change, AX callback)
+CHOTU_DEBUG=1 python -m chotu  # same, via env (works for the LaunchAgent too)
+python -m chotu                # INFO: the high-level narrative only
+
+tail -f ~/Library/Logs/hey-claude/chotu.log   # watch it live (rotates at ~2 MB × 3)
+```
+
+Under the LaunchAgent, stderr is also captured in `~/Library/Logs/hey-claude/daemon.err.log`.
+This is separate from the structured JSONL telemetry below (which is for tuning, not watching).
+
 ## Config
 
 Everything lives in [`config.toml`](config.toml) (FR-5): wake phrase/model/threshold,
@@ -95,8 +112,8 @@ Hard-won from the first live ride (2026-07-06):
 - **Wake word never fires / all scores 0.000** — an incompatible **onnxruntime**
   silently breaks openWakeWord (features compute, classifier outputs 0 on *everything*,
   even known-positive clips). Pinned to `>=1.16,<1.19`; if it regresses, verify with
-  `pip show onnxruntime`. Debug with `CHOTU_WAKE_DEBUG=1 python -m chotu` → watch
-  `~/Library/Logs/hey-claude/wake-debug.log` for the `max_score` heartbeat.
+  `pip show onnxruntime`. Debug with `python -m chotu --debug` → watch
+  `~/Library/Logs/hey-claude/chotu.log` for the `max_score` heartbeat.
 - **Silent mic (peak ~64)** — the process lacks Microphone permission (separate from
   the extension's). Run `python -m chotu --mic-check`; grant Microphone to your
   terminal / the venv python. On a **Mac mini there is no built-in mic** — a

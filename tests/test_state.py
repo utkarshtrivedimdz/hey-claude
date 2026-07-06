@@ -3,7 +3,7 @@ import pytest
 
 from chotu.config import Config
 from chotu.commands import from_config, Fixups
-from chotu.state import StateMachine, S
+from chotu.state import StateMachine, S, LEGAL, IllegalTransition
 from chotu.bootstrap import BootstrapResult
 from tests.fakes import FakeClock, FakeKeys, FakeAX, FakeBootstrap, FakeTelemetry
 
@@ -15,8 +15,9 @@ def make(boot=None, disarm=10.0, fixups=None):
     clock = FakeClock()
     keys, ax, tel = FakeKeys(), FakeAX(), FakeTelemetry()
     boot = boot or FakeBootstrap()
+    # strict=True so an illegal transition is a hard failure in tests (prod only logs).
     sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel,
-                      monotonic=clock.now, fixups=fixups)
+                      monotonic=clock.now, fixups=fixups, strict=True)
     return sm, cfg, clock, keys, ax, tel, boot
 
 
@@ -128,3 +129,66 @@ def test_default_fixups_is_noop():
     sm.on_wake(0.9)
     ax.feed("open clot code okay send")
     assert keys.names()[-2:] == ["backspace", "ret"]
+
+
+# ---- Phase 1: transition chokepoint --------------------------------------
+
+def test_legal_table_is_exhaustive():
+    # Every state must be a key in LEGAL (no state can transition without a rule).
+    assert set(LEGAL.keys()) == set(S)
+    # Targets are real states, and no state declares an unreachable self-loop we forgot.
+    for src, dsts in LEGAL.items():
+        assert dsts <= set(S)
+
+
+def test_illegal_transition_raises_in_strict_mode():
+    sm, *_ = make()                      # starts IDLE
+    with pytest.raises(IllegalTransition):
+        sm._transition(S.DICTATING, "bogus")   # IDLE → DICTATING is not declared
+
+
+def test_illegal_transition_logs_but_does_not_raise_when_not_strict():
+    # Prod construction (strict defaults False): illegal is logged, not fatal.
+    cfg = Config()
+    clock, keys, ax, tel = FakeClock(), FakeKeys(), FakeAX(), FakeTelemetry()
+    sm = StateMachine(cfg, FakeBootstrap(), keys, ax, from_config(cfg), tel,
+                      monotonic=clock.now)
+    sm._transition(S.DICTATING, "bogus")       # no raise
+    assert sm.state is S.DICTATING
+    assert tel.transitions[-1]["illegal"] is True
+
+
+def test_happy_send_emits_legal_transition_sequence():
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_wake(0.9)
+    ax.feed("hi okay send")
+    assert sm.state is S.IDLE
+    reasons = [(t["frm"], t["to"], t["reason"]) for t in tel.transitions]
+    assert reasons == [
+        ("idle", "armed", "wake_accepted"),
+        ("armed", "dictating", "dictation_started"),
+        ("dictating", "idle", "dispatched_sent"),
+    ]
+    assert all(t["illegal"] is False for t in tel.transitions)
+
+
+def test_disarm_emits_silence_timeout_transition():
+    sm, cfg, clock, keys, ax, tel, boot = make(disarm=5.0)
+    sm.on_wake(0.9)
+    clock.advance(6.0)
+    sm.tick()
+    assert tel.transitions[-1] == {
+        "frm": "dictating", "to": "idle", "reason": "silence_timeout",
+        "mono": clock.now(), "illegal": False,
+    }
+
+
+def test_bootstrap_failure_emits_armed_then_idle():
+    boot = FakeBootstrap(BootstrapResult(ok=False, cold_start=False, ms=9, focus_gate="abort"))
+    sm, cfg, clock, keys, ax, tel, _ = make(boot=boot)
+    sm.on_wake(0.9)
+    reasons = [(t["frm"], t["to"], t["reason"]) for t in tel.transitions]
+    assert reasons == [
+        ("idle", "armed", "wake_accepted"),
+        ("armed", "idle", "bootstrap_failed"),
+    ]

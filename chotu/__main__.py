@@ -7,6 +7,7 @@ changes. The wake thread only enqueues, so the state machine is single-threaded.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import queue
 import subprocess
@@ -14,10 +15,12 @@ import sys
 import threading
 from pathlib import Path
 
-from . import __version__, config as config_mod
+from . import __version__, config as config_mod, log as logmod
 from .commands import from_config, fixups_from_config
 from .state import StateMachine, S
 from .telemetry import Telemetry
+
+log = logging.getLogger(__name__)
 
 _SOUNDS = {
     "armed": "Tink", "send": "Pop", "cancel": "Bottle",
@@ -69,28 +72,36 @@ def run(cfg, once: bool = False) -> int:
     state = {"armed_once": False}
 
     def tick(_timer):
+        drained = 0
         while True:
             try:
                 score = q.get_nowait()
             except queue.Empty:
                 break
+            drained += 1
             sm.on_wake(score)
+        if drained:
+            log.debug("tick: drained %d wake event(s), state=%s", drained, sm.state.value)
         sm.tick()
         if once:
             if sm.state is not S.IDLE:
                 state["armed_once"] = True
             elif state["armed_once"]:
+                log.info("--once: turn complete, stopping run loop")
                 CFRunLoopStop(CFRunLoopGetCurrent())
 
     NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.12, True, tick)
 
     if once:
+        log.info("--once: arming now (no wake word) — dictate a prompt then say your command word")
         print("chotu --once: arming now — dictate a prompt then say your command word.")
         q.put(1.0)
     else:
         from .wake import WakeListener
         listener = WakeListener(cfg, lambda score: q.put(score))
         threading.Thread(target=listener.run, name="wake", daemon=True).start()
+        log.info("chotu listening: wake=%r model=%r device=%s",
+                 cfg.wake_phrase, cfg.wake_model or cfg.wake_pretrained_fallback, cfg.mic_device)
         print(f"chotu listening (wake='{cfg.wake_phrase}', "
               f"model='{cfg.wake_model or cfg.wake_pretrained_fallback}'). Ctrl+C to quit.")
 
@@ -99,7 +110,7 @@ def run(cfg, once: bool = False) -> int:
     try:
         CFRunLoopRun()
     except KeyboardInterrupt:
-        pass
+        log.info("interrupted — shutting down")
     return 0
 
 
@@ -109,6 +120,7 @@ def main(argv=None) -> int:
     p.add_argument("--once", action="store_true", help="arm once without the wake word (M1 smoke test)")
     p.add_argument("--read", action="store_true", help="print the Claude box AXValue once and exit (debug)")
     p.add_argument("--mic-check", action="store_true", help="record 2s and report level (verify Mic permission)")
+    p.add_argument("--debug", action="store_true", help="verbose DEBUG logging to stderr + ~/Library/Logs/hey-claude/chotu.log")
     p.add_argument("--version", action="store_true")
     args = p.parse_args(argv)
 
@@ -128,7 +140,10 @@ def main(argv=None) -> int:
         print(f"peak amplitude: {peak} / 32767 — {'MIC OK' if ok else 'SILENT (grant Microphone to this process)'}")
         return 0 if ok else 2
 
-    cfg = config_mod.load(_find_config(args.config))
+    cfg_path = _find_config(args.config)
+    cfg = config_mod.load(cfg_path)
+    logmod.configure(debug=logmod.debug_enabled(args.debug), log_dir=cfg.telemetry_log_dir)
+    log.info("chotu %s starting (config=%s, debug=%s)", __version__, cfg_path, logmod.debug_enabled(args.debug))
 
     if args.read:
         from .ax import RealAX

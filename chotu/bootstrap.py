@@ -7,11 +7,14 @@ unit-testable with a fake (ARCHITECTURE §7.2).
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 from .ports import SystemPort
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,22 +57,36 @@ class Bootstrap:
 
         if not self.system.is_app_running():
             cold = True
+            log.info("bootstrap: %s not running — cold start (launch + open workspace)",
+                     self.cfg.target_bundle_id)
             self.system.launch_app()
             self.system.open_path(self.cfg.target_workspace)
         elif not self._title_active():
+            log.info("bootstrap: target window not active — opening workspace %s",
+                     self.cfg.target_workspace)
             self.system.open_path(self.cfg.target_workspace)
+        else:
+            log.debug("bootstrap: %s already running with target window active", self.cfg.target_bundle_id)
 
         self.system.raise_app()
 
         # Poll for the focus gate to pass (cold start needs a few seconds).
         deadline = t0 + self._ready_timeout
         focus_gate = "abort"
+        polls = 0
         while self._mono() < deadline:
             if self._focus_ok():
                 focus_gate = "pass" if not cold else "raised"
                 break
+            polls += 1
+            log.debug("bootstrap: focus gate not yet satisfied (poll %d) — re-raising", polls)
             self.system.raise_app()
             self._sleep(0.25)
 
         ms = int((self._mono() - t0) * 1000)
+        if focus_gate == "abort":
+            log.error("bootstrap: focus gate never passed after %dms (front=%r, title_active=%s) — abort",
+                      ms, self.system.frontmost_bundle_id(), self._title_active())
+        else:
+            log.info("bootstrap ready: focus_gate=%s cold=%s %dms", focus_gate, cold, ms)
         return BootstrapResult(ok=(focus_gate != "abort"), cold_start=cold, ms=ms, focus_gate=focus_gate)
