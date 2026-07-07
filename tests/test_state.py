@@ -295,44 +295,79 @@ def test_resolve_suppressed_while_backgrounded():
     assert sm.state is S.DIALOG
 
 
-def test_path_b_wake_with_pending_dialog_enters_dialog_not_dictation():
-    # A pending box covers the input; the old code aborted "button not found". Now Path-B
-    # catches it after the raise and enters DIALOG instead of dictating.
+def test_path_b_wake_with_pending_box_escapes_and_dictates():
+    # A pending box covers the input (old code aborted "button not found"). Now Path-B Escs it,
+    # pre-fills the options, and arms a normal dictation turn — all on this single wake.
     ax = FakeAX(dialog=APPROVAL)
     sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
     sm.on_wake(0.9)
-    assert sm.state is S.DIALOG
-    assert "press_dictation" not in ax.ops    # never started dictation
-    assert not ax.box_observing
+    assert sm.state is S.DICTATING
+    assert ("esc",) in keys.ops                                     # box dismissed
+    assert ("type", "[options were: 1 Yes · 2 Yes, allow · 3 No] → ") in keys.ops  # pre-fill
+    assert "press_dictation" in ax.ops                             # dictation armed
+    assert tel.dialogs[-1]["event"] == "dismiss"
     reasons = [(t["frm"], t["to"], t["reason"]) for t in tel.transitions]
     assert reasons == [
         ("idle", "armed", "wake_accepted"),
-        ("armed", "idle", "dialog_redirect"),
-        ("idle", "dialog", "dialog_appeared"),
+        ("armed", "dictating", "dictation_started"),
     ]
 
 
-def test_wake_in_dialog_resolves_when_box_gone():
+def test_wake_in_dialog_dismisses_prefills_and_dictates():
+    # Phase 2: wake in a box → Esc it, pre-fill its options, arm a normal dictation turn.
     ax = FakeAX(dialog=APPROVAL)
     sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
     sm.on_dialog_change(APPROVAL)
     assert sm.state is S.DIALOG
-    ax.set_dialog(None)                       # box was answered by mouse; resolve event missed
-    sm.on_wake(0.9)                           # wake escape hatch re-checks
-    assert sm.state is S.IDLE                 # foreground + gone → resolved
-    assert tel.wakes[-1]["note"] == "dialog_refresh"
+    sm.on_wake(0.9)
+    assert ("esc",) in keys.ops                                    # box dismissed
+    assert ("type", "[options were: 1 Yes · 2 Yes, allow · 3 No] → ") in keys.ops  # pre-fill
+    assert keys.names().index("esc") < keys.names().index("cmd_esc")  # Esc before focus+type
+    assert sm.state is S.DICTATING                                 # normal turn armed, mic on
+    assert sm.current_dialog() is None
+    assert tel.wakes[-1]["note"] == "dialog_escape"
+    assert tel.dialogs[-1]["event"] == "dismiss"
+    reasons = [(t["frm"], t["to"], t["reason"]) for t in tel.transitions]
+    assert reasons[-3:] == [
+        ("dialog", "idle", "dialog_dismissed"),
+        ("idle", "armed", "wake_escape"),
+        ("armed", "dictating", "dictation_started"),
+    ]
 
 
-def test_wake_in_dialog_reannounces_when_box_still_present():
-    beeps: list = []
+def test_wake_in_dialog_answer_appends_to_prefill_and_sends():
     ax = FakeAX(dialog=APPROVAL)
-    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax, beeps=beeps)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
     sm.on_dialog_change(APPROVAL)
-    beeps.clear()
-    sm.on_wake(0.9)                           # box still there
-    assert sm.state is S.DIALOG
-    assert beeps == ["dialog"]                # re-announced
-    assert tel.dialogs[-1]["event"] == "refresh"
+    sm.on_wake(0.9)
+    # the pre-fill is already in the box; dictation appends the spoken answer + command word
+    ax.feed("[options were: 1 Yes · 2 Yes, allow · 3 No] → option 3 no okay send")
+    assert sm.state is S.IDLE
+    assert "ret" in keys.names()                                   # sent to Claude
+    assert tel.turns[-1]["outcome"] == "sent"
+
+
+def test_wake_in_dialog_box_already_gone_starts_plain_turn():
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    sm.on_dialog_change(APPROVAL)
+    ax.set_dialog(None)                       # answered by mouse; box gone before the wake
+    sm.on_wake(0.9)
+    assert sm.state is S.DICTATING            # foreground + gone → plain dictation turn
+    assert ("esc",) not in keys.ops           # nothing to dismiss
+    assert not any(o[0] == "type" for o in keys.ops)  # no pre-fill
+    assert sm.current_dialog() is None
+
+
+def test_wake_in_dialog_held_when_backgrounded():
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    sm.on_dialog_change(APPROVAL)
+    sm.appstate.on_deactivate()               # went to background before the wake
+    ax.set_dialog(None)                       # blind read returns None
+    sm.on_wake(0.9)
+    assert sm.state is S.DIALOG               # never Esc/dictate while blind (loophole #6)
+    assert ("esc",) not in keys.ops
 
 
 def test_wake_in_dialog_is_not_swallowed_by_self_trigger_guard():

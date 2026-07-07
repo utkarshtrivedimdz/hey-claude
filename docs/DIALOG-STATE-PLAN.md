@@ -392,12 +392,28 @@ loophole #5).
 
 ---
 
-## 8. Voice grammar (Phases 2–3, onto press-by-name)
+## 8. Answering a box — the "escape + pre-fill" flow (SUPERSEDES press-by-name grammar)
 
-- **Approval** — `okay approve`/`yes` → `… Yes`; `okay reject`/`no` → `… No`;
-  `okay allow all` → `Yes, allow…`.
-- **Choice** — `okay option two`/`B`/`<label>` → radio; `okay submit` → `N Submit
-  answers` (warn+beep no-op while `submit_enabled` False); one-shot `okay submit two`.
+**Revised 2026-07-07 (Phase 2 build).** The original plan assumed a spoken answer could be
+captured *while the box is open* (press-by-name's premise: dictate `okay press yes` into the
+input). **Live check: the mic disappears when a box covers the input** — Claude's Voice-dictation
+button is gone, so there is no way to capture voice in place. So Phase 2 does NOT press the box's
+buttons by voice. Instead a **wake while a box is open**:
+
+1. **Esc** the box — which returns to the normal input **and** brings the mic back. (Esc declines
+   the box, so the follow-up is a *fresh instruction*, not a second vote on the same tool call.)
+2. **Pre-fill** the input with a compact reminder of the options we already captured from
+   `classify()`: `[options were: 1 Yes · 2 Yes, allow all · 3 No] → `.
+3. **Arm a normal dictation turn** — the spoken answer appends after the tag; `okay send` sends the
+   whole thing to Claude with the question context intact.
+
+This unifies the two entry points: the **observer** announces a foreground box (beep, `S.DIALOG`);
+**any wake** while a box is present (whether we're in `S.DIALOG`, or Path-B finds one after a
+background→foreground raise) runs the same Esc + pre-fill + dictate in one step. No STT, no tab
+juggling, no new permission — it converts the blocked-box state back into the flow that already
+works. Explicit approve-by-button (Yes/Allow) is deferred; you redirect by voice ("yes, do it").
+
+**Choice boxes** ride the same flow — the pre-fill lists the radio options; you dictate your pick.
 
 ---
 
@@ -411,7 +427,8 @@ loophole #5).
    wake-in-DIALOG refresh, **reconciler timer** (§5 backstop sweep), `[dialog]` config,
    `FakeAX`/`FakeSystem` support + state tests (incl. a fake-clock reconcile test:
    drop an event, tick, assert the FSM snaps to truth).
-2. **Answer approval** — `approve`/`reject`/`allow` → press.
+2. **Answer via escape + pre-fill** (§8, revised) — wake in a box → Esc + pre-fill options +
+   normal dictation turn. Unifies Path-B (wake finds a box) with wake-in-DIALOG. *(shipped)*
 3. **Answer choice** — `AXValueChanged` selection tracking + `option/submit` (gated).
 4. **Background-tab awareness** — announce off the tab **badge** while VS Code foreground.
 

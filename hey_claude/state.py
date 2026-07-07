@@ -37,15 +37,15 @@ class S(Enum):
 # Every value in `_transition` is asserted against this table (HARDENING-PLAN Phase 1).
 # DICTATING → ACTING on a command match; ACTING → IDLE once Actions.perform runs.
 # DICTATING → IDLE remains for the silence/arm-timeout backstops (no dispatch).
-# S.DIALOG is reactive (Claude-initiated), entered only from IDLE (a box appearing
-# mid-DICTATING is masked — loophole #7). DIALOG→DIALOG is the wake-refresh self-edge
-# (re-raise + re-announce). Resolve (DIALOG→IDLE) is foreground-gated in on_dialog_change.
+# S.DIALOG is reactive (Claude-initiated), entered from IDLE by the observer's announce (a box
+# appearing mid-DICTATING is masked — loophole #7). It leaves to IDLE either on a foreground-gated
+# resolve (on_dialog_change) or when a wake escapes it (Esc → dictate, via wake_escape → ARMED).
 LEGAL: dict[S, set[S]] = {
     S.IDLE: {S.ARMED, S.DIALOG},
     S.ARMED: {S.IDLE, S.DICTATING},
     S.DICTATING: {S.IDLE, S.ACTING},
     S.ACTING: {S.IDLE},
-    S.DIALOG: {S.IDLE, S.DIALOG},
+    S.DIALOG: {S.IDLE},
 }
 
 
@@ -126,26 +126,35 @@ class StateMachine:
             self._transition(S.IDLE, "bootstrap_failed")
             return
 
-        # Path B (§4): bootstrap raised VS Code, so a pending Claude box is now visible. If one
-        # is open it covers the input — detect it BEFORE dictation (this also turns the old
-        # "Voice-dictation button not found" abort into the correct branch).
+        # Path B (§4): bootstrap raised VS Code, so a pending Claude box is now visible. The mic is
+        # unavailable while a box covers the input, so the only useful action on this wake is to
+        # Esc it and pre-fill its options, then dictate (same escape as wake-in-DIALOG) — handled
+        # inline so a background→box→wake is one step, not an announce that needs a second wake.
+        # (This also turns the old "Voice-dictation button not found" abort into the right branch.)
         #
-        # Only pay the ~1.5s settle window when we BRIDGED FROM BACKGROUND (the webview tree
-        # rebuilds ~560ms after the raise). If VS Code was already foreground, the live observer
-        # would already have moved us to DIALOG, so a pending box can't be here — a single instant
-        # scan (settle 0) confirms and we go straight to dictation with no per-wake stall.
+        # Only pay the ~1.5s settle when we BRIDGED FROM BACKGROUND (the webview rebuilds ~560ms
+        # after the raise); already-foreground uses settle 0 so a no-box wake never stalls.
+        tag = ""
         if self.cfg.dialog_enabled:
             box = self.ax.find_dialog(settle_s=(1.5 if not was_fg else 0.0))
             if box is not None:
-                log.info("Path-B: %s box present after raise → DIALOG (session=%r), no dictation",
+                log.info("Path-B: %s box present → Esc + pre-fill + dictate (session=%r)",
                          box.type, box.session)
-                self._resolve_wake(True)
-                self._transition(S.IDLE, "dialog_redirect")  # unwind the arm; we're not dictating
-                self._enter_dialog(box)
-                return
+                tag = self._dismiss_and_tag(box)
 
-        self.keys.cmd_esc()   # focus Claude input
-        # The Voice-dictation button is the ground truth for the DICTATING state.
+        self._begin_dictation(prefill=tag)
+
+    def _begin_dictation(self, prefill: str = "") -> None:
+        """From ARMED: focus the Claude input, optionally type a pre-fill, then arm the mic.
+
+        The Voice-dictation button is the ground truth for the DICTATING state. `prefill` (Phase 2)
+        is typed into the box before dictation so the user's spoken answer appends to it — used to
+        drop a dismissed dialog's option reminder in ahead of the answer.
+        """
+        self.keys.cmd_esc()   # focus Claude input (Cmd+Esc focuses without dismissing anything)
+        if prefill:
+            self.keys.type_text(prefill)
+            log.info("pre-filled %d chars before dictation", len(prefill))
         state = self.ax.dictation_on()
         if state is None:
             log.error("Voice-dictation button not found — aborting turn, no dictation")
@@ -262,31 +271,63 @@ class StateMachine:
         log.info("DIALOG resolved → IDLE")
 
     def _wake_in_dialog(self, score: float, thr: float) -> None:
-        """Wake while a box is open: re-raise VS Code and re-evaluate (§5 escape hatch)."""
-        self.tel.log_wake(score, thr, True, followed_through=True, note="dialog_refresh")
+        """Wake while a box is open (§5 escape): Esc it, pre-fill its options, dictate the answer.
+
+        Claude's dictation mic is unavailable while a box covers the input, so we don't try to
+        capture the answer in place. Instead we Esc the box (which returns to the normal input +
+        mic), pre-fill a compact reminder of the options we captured, and arm a normal dictation
+        turn — the spoken answer appends to the reminder and sends as an ordinary prompt. Esc
+        declines the box, so the follow-up is a fresh instruction, not a second vote on it.
+        """
+        self.tel.log_wake(score, thr, True, followed_through=True, note="dialog_escape")
         was_fg = self.appstate.is_foreground  # bridging-from-background needs the rebuild settle
-        boot = self.bootstrap.ensure_ready()  # raises VS Code → tree rebuilds (if it was blind)
-        if not boot.ok:
+        self._boot = self.bootstrap.ensure_ready()  # raises VS Code → tree rebuilds (if it was blind)
+        if not self._boot.ok:
             log.error("wake-in-DIALOG: bootstrap failed — staying in DIALOG")
             self._beep("error")
             return
         settle = 1.5 if not was_fg else 0.0
-        box = self.ax.find_dialog(settle_s=settle) if self.cfg.dialog_enabled else None
-        if box is None:
-            # None after a raise: resolve only if we're foreground (else still blind — hold).
-            if self.appstate.is_foreground:
-                log.info("wake-in-DIALOG: box gone (foreground) → resolving")
-                self._resolve_dialog()
-            else:
-                log.info("wake-in-DIALOG: box None but %s — holding DIALOG",
-                         self.appstate.state.value)
+        box = self.ax.find_dialog(settle_s=settle) if self.cfg.dialog_enabled else self._dialog
+        if box is None and not self.appstate.is_foreground:
+            # Still blind (backgrounded) — don't touch anything; hold DIALOG (loophole #6).
+            log.info("wake-in-DIALOG: box None but %s — holding DIALOG", self.appstate.state.value)
             return
-        # Still a box → re-announce (and refresh the stash if it changed).
-        self._dialog = box
-        self._transition(S.DIALOG, "wake_refresh")  # self-edge breadcrumb
-        self._beep("dialog")
-        self.tel.log_dialog("refresh", box.type, len(box.options), self.appstate.is_foreground)
-        log.info("wake-in-DIALOG: %s box still present → re-announced", box.type)
+
+        if box is not None:
+            tag = self._dismiss_and_tag(box)
+            log.info("wake-in-DIALOG: dismissed %s box (Esc) → pre-fill + dictate", box.type)
+        else:
+            # Box already gone (mouse-answered / missed resolve) but we're foreground → normal turn.
+            tag = ""
+            self.tel.log_dialog("resolve", None, None, True)
+            log.info("wake-in-DIALOG: box already gone → plain dictation turn")
+
+        self._dialog = None
+        self._transition(S.IDLE, "dialog_dismissed")
+        # Start a normal dictation turn, pre-filled with the option reminder (if any).
+        self._wake_ts = self._arm_ts = self._mono()
+        self._pending_wake = score
+        self._transition(S.ARMED, "wake_escape")
+        self._begin_dictation(prefill=tag)
+
+    def _dismiss_and_tag(self, box: DialogBox) -> str:
+        """Esc a live box (decline it) and return its options as a pre-fill tag. Shared by the
+        Path-B (wake-in-IDLE) and wake-in-DIALOG escape paths."""
+        tag = self._options_tag(box)
+        self.keys.esc()  # dismiss the box (Esc = decline); input + mic return
+        self.tel.log_dialog("dismiss", box.type, len(box.options), True)
+        return tag
+
+    def _options_tag(self, box: Optional[DialogBox]) -> str:
+        """Compact reminder of a dismissed box's options for the pre-fill (Phase 2)."""
+        if box is None or not box.options:
+            return ""
+        parts = []
+        for i, opt in enumerate(box.options, 1):
+            opt = (opt or "").strip()
+            # Approval buttons already carry their number ("1 Yes"); number the rest by position.
+            parts.append(opt if opt[:1].isdigit() else f"{i} {opt}")
+        return f"[options were: {' · '.join(parts)}] → "
 
     # ---- internals -------------------------------------------------------
     def _enter_dictating(self) -> None:
