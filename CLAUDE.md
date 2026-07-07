@@ -22,8 +22,9 @@ the outside world.
 | [`hey_claude/keys.py`](hey_claude/keys.py) | keystroke injection via `osascript` (Esc/type/⌫/⏎; **not** dictation — that's an AXPress). | osascript |
 | [`hey_claude/system.py`](hey_claude/system.py) | frontmost / launch / raise / window title. | pyobjc |
 | [`hey_claude/wake.py`](hey_claude/wake.py) | openWakeWord listener on its own thread. | audio |
+| [`hey_claude/menubar.py`](hey_claude/menubar.py) | `NSStatusItem` toggle: click mutes/unmutes wake listening (waveform icon). Needs `NSApp.run()`. | pyobjc |
 | [`hey_claude/log.py`](hey_claude/log.py) | human-readable debug stream (stdlib `logging`). | — |
-| [`hey_claude/__main__.py`](hey_claude/__main__.py) | wires everything on a CFRunLoop. | — |
+| [`hey_claude/__main__.py`](hey_claude/__main__.py) | wires everything on a CFRunLoop (daemon runs it under `NSApp.run()` for the menu bar). | — |
 
 `StateMachine` holds `keys`/`ax`/`commands`/`bootstrap`/`telemetry`; `Bootstrap` holds
 only `system`. The full picture is [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (diagrams;

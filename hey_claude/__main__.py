@@ -72,7 +72,44 @@ def run(cfg, once: bool = False) -> int:
 
     sm, ax = _build(cfg)
     q: "queue.Queue[float]" = queue.Queue()
-    state = {"armed_once": False, "mic_lost": False}
+    # use_nsapp: run under NSApplication (menu bar toggle) rather than a bare run loop.
+    # Only the daemon needs it; --once stays on CFRunLoopRun so its tested smoke path
+    # is byte-for-byte unchanged. `listening` is the menu-bar mute state (see _toggle).
+    use_nsapp = (not once) and cfg.menubar_enabled
+    state = {"armed_once": False, "mic_lost": False, "listening": True, "use_nsapp": use_nsapp}
+
+    def _stop_runloop():
+        # NSApp.terminate_ exits cleanly (code 0); CFRunLoopStop ends the bare loop.
+        if state["use_nsapp"]:
+            from AppKit import NSApplication
+            NSApplication.sharedApplication().terminate_(None)
+        else:
+            CFRunLoopStop(CFRunLoopGetCurrent())
+
+    # Wake-thread lifecycle. The listener runs on its own thread and only enqueues scores
+    # (invariant #4 — the state machine still mutates only on the main loop). There is only
+    # ever one wake thread; the menu-bar toggle stop/starts it so "off" closes the
+    # InputStream and macOS releases the mic. `once` arms without a wake thread at all.
+    from .wake import WakeListener
+    wake = {"thread": None, "listener": None}
+
+    def _on_mic_lost():  # called from the wake thread; tick() (main thread) acts on it
+        state["mic_lost"] = True
+
+    def _start_wake():
+        old = wake["thread"]
+        if old is not None and old.is_alive():
+            old.join(timeout=1.0)  # let the previous stream fully close before reopening
+        listener = WakeListener(cfg, lambda score: q.put(score), on_mic_lost=_on_mic_lost)
+        t = threading.Thread(target=listener.run, name="wake", daemon=True)
+        wake["listener"], wake["thread"] = listener, t
+        t.start()
+
+    def _stop_wake():
+        listener = wake["listener"]
+        if listener is not None:
+            listener.stop()  # thread exits within ~0.5s and closes the InputStream (mic released)
+        wake["listener"] = None
 
     def tick(_timer):
         # Mic device disconnected (Bluetooth drop) → stop cleanly rather than sit deaf.
@@ -81,7 +118,7 @@ def run(cfg, once: bool = False) -> int:
         if state["mic_lost"]:
             log.critical("mic lost — stopping daemon (clean exit; reconnect mic + restart to resume)")
             _beep("deaf")
-            CFRunLoopStop(CFRunLoopGetCurrent())
+            _stop_runloop()
             return
         drained = 0
         while True:
@@ -90,16 +127,20 @@ def run(cfg, once: bool = False) -> int:
             except queue.Empty:
                 break
             drained += 1
-            sm.on_wake(score)
+            if state["listening"]:
+                sm.on_wake(score)
+            # else: muted from the menu bar — discard any score still in flight so a late
+            # wake never fires after toggle-off.
         if drained:
-            log.debug("tick: drained %d wake event(s), state=%s", drained, sm.state.value)
+            log.debug("tick: drained %d wake event(s), state=%s listening=%s",
+                      drained, sm.state.value, state["listening"])
         sm.tick()
         if once:
             if sm.state is not S.IDLE:
                 state["armed_once"] = True
             elif state["armed_once"]:
                 log.info("--once: turn complete, stopping run loop")
-                CFRunLoopStop(CFRunLoopGetCurrent())
+                _stop_runloop()
 
     NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.12, True, tick)
 
@@ -107,19 +148,46 @@ def run(cfg, once: bool = False) -> int:
         log.info("--once: arming now (no wake word) — dictate a prompt then say your command word")
         print("hey-claude --once: arming now — dictate a prompt then say your command word.")
         q.put(1.0)
-    else:
-        from .wake import WakeListener
-        def _on_mic_lost():  # called from the wake thread; tick() (main thread) acts on it
-            state["mic_lost"] = True
-        listener = WakeListener(cfg, lambda score: q.put(score), on_mic_lost=_on_mic_lost)
-        threading.Thread(target=listener.run, name="wake", daemon=True).start()
-        log.info("hey-claude listening: wake=%r model=%r device=%s",
-                 cfg.wake_phrase, cfg.wake_model or cfg.wake_pretrained_fallback, cfg.mic_device)
-        print(f"hey-claude listening (wake='{cfg.wake_phrase}', "
-              f"model='{cfg.wake_model or cfg.wake_pretrained_fallback}'). Ctrl+C to quit.")
+        # CFRunLoopRun() (not NSRunLoop.run()) so CFRunLoopStop cleanly ends --once.
+        # The AXObserver source and NSTimer both live on this same run loop.
+        try:
+            CFRunLoopRun()
+        except KeyboardInterrupt:
+            log.info("interrupted — shutting down")
+        return 0
 
-    # CFRunLoopRun() (not NSRunLoop.run()) so CFRunLoopStop cleanly ends --once.
-    # The AXObserver source and NSTimer both live on this same run loop.
+    _start_wake()
+    log.info("hey-claude listening: wake=%r model=%r device=%s",
+             cfg.wake_phrase, cfg.wake_model or cfg.wake_pretrained_fallback, cfg.mic_device)
+    print(f"hey-claude listening (wake='{cfg.wake_phrase}', "
+          f"model='{cfg.wake_model or cfg.wake_pretrained_fallback}'). Ctrl+C to quit.")
+
+    if use_nsapp:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        from .menubar import MenuBar
+
+        menubar = MenuBar()
+
+        def _toggle():
+            state["listening"] = not state["listening"]
+            menubar.set_listening(state["listening"])  # repaint first — start/stop can briefly block
+            if state["listening"]:
+                log.info("menu bar: listening ON — starting wake listener")
+                _start_wake()
+            else:
+                log.info("menu bar: listening OFF — releasing mic")
+                _stop_wake()
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)  # menu bar item, no Dock icon
+        menubar.attach(_toggle)
+        try:
+            app.run()
+        except KeyboardInterrupt:
+            log.info("interrupted — shutting down")
+        return 0
+
+    # menubar disabled → original bare run loop (AXObserver + NSTimer live here too)
     try:
         CFRunLoopRun()
     except KeyboardInterrupt:

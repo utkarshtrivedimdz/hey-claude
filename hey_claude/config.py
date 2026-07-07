@@ -84,6 +84,11 @@ class Config:
 
     keymap: dict = field(default_factory=_default_keymap)
 
+    # menu bar (UI): a status-bar icon whose click toggles wake listening on/off.
+    # "off" fully stops the wake listener so macOS releases the mic. Set false to run
+    # headless (no NSStatusItem, original bare run loop).
+    menubar_enabled: bool = True
+
     # telemetry (FR-7)
     telemetry_enabled: bool = True
     telemetry_retention_days: int = 30
@@ -146,6 +151,9 @@ def load(path: Optional[str] = None) -> Config:
     cfg.target_title_substr = tgt.get("title_substr", cfg.target_title_substr)
 
     cfg.keymap = {**cfg.keymap, **data.get("keymap", {})}
+
+    mb = data.get("menubar", {})
+    cfg.menubar_enabled = bool(mb.get("enabled", cfg.menubar_enabled))
 
     tel = data.get("telemetry", {})
     cfg.telemetry_enabled = bool(tel.get("enabled", cfg.telemetry_enabled))
