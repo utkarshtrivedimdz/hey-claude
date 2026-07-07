@@ -10,7 +10,11 @@ pretrained_fallback = "hey_jarvis"
 # onnx is required on macOS (tflite_runtime has no arm64 wheels; the default 'tflite'
 # framework silently zeroes the preprocessor → all scores 0.0).
 framework = "onnx"
-threshold = 0.5
+threshold = 0.5        # Safe default. Tuning finding (2026-07-06): on quiet-voice OnePlus Buds
+                       # audio, real attempts clustered 0.157–0.276 as sub-threshold near-misses,
+                       # so a personal machine may want ~0.15 IF false wakes are acceptable. Keep
+                       # that machine-specific value in ~/.config/hey-claude/config.toml, not here —
+                       # 0.15 would false-trigger constantly on most mics/environments.
 log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
 # mic_device = 1       # sounddevice device index; omit for default input
 
