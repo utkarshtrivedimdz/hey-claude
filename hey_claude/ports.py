@@ -5,7 +5,9 @@ modules, so unit tests inject fakes and never import pyobjc (ARCHITECTURE §7.1)
 """
 from __future__ import annotations
 
-from typing import Callable, Optional, Protocol, runtime_checkable
+from typing import Callable, Optional, Protocol, Tuple, runtime_checkable
+
+from .appstate import Tab
 
 
 @runtime_checkable
@@ -43,3 +45,6 @@ class SystemPort(Protocol):
     def launch_app(self) -> None: ...
     def open_path(self, path: str) -> None: ...
     def raise_app(self) -> None: ...
+    # Tabs snapshot (§3b) — the AXTabGroup's radio children. Valid only while FOREGROUND;
+    # the caller (AppState-gated) is responsible for not trusting a background read.
+    def list_tabs(self) -> Tuple[Tab, ...]: ...

@@ -144,12 +144,13 @@ class FakeTelemetry:
 
 
 class FakeSystem:
-    """For bootstrap tests. Scriptable frontmost/title/running."""
+    """For bootstrap tests. Scriptable frontmost/title/running + tabs snapshot."""
     def __init__(self, running=True, front="com.microsoft.VSCode",
-                 title="proj — geofast (Workspace)"):
+                 title="proj — geofast (Workspace)", tabs=()):
         self.running = running
         self.front = front
         self.title = title
+        self.tabs = tuple(tabs)   # scriptable list_tabs() return
         self.ops: list = []
 
     def frontmost_bundle_id(self): return self.front
@@ -158,3 +159,4 @@ class FakeSystem:
     def launch_app(self): self.ops.append("launch"); self.running = True
     def open_path(self, path): self.ops.append(("open", path))
     def raise_app(self): self.ops.append("raise"); self.front = "com.microsoft.VSCode"
+    def list_tabs(self): return self.tabs
