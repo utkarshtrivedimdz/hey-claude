@@ -19,6 +19,23 @@ from typing import Callable
 log = logging.getLogger(__name__)
 
 
+def _reinit_portaudio(sd) -> None:
+    """Force PortAudio to re-enumerate audio devices.
+
+    A long-lived process initializes PortAudio once (at sounddevice import) and caches the
+    device list. After the input device changes — a Bluetooth mic dropping and returning —
+    that cache goes stale and every InputStream open returns -9986 FOREVER in this process,
+    even though a fresh process opens the same device fine. terminate()+initialize() resets
+    the CoreAudio HAL; it's the sanctioned sounddevice workaround for device-topology
+    changes. Best-effort: log and continue if it raises (we then open with cached state).
+    """
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        log.warning("PortAudio re-init failed; opening with cached device state", exc_info=True)
+
+
 class WakeListener:
     def __init__(self, cfg, on_wake: Callable[[float], None],
                  on_mic_lost: Callable[[], None] | None = None):
@@ -53,6 +70,11 @@ class WakeListener:
         import numpy as np
         import sounddevice as sd
 
+        # Re-enumerate devices before (re)opening: a wake thread that restarts after a
+        # device change (Bluetooth drop/return) inherits this process's stale PortAudio
+        # cache and would otherwise fail every open with -9986. See _reinit_portaudio.
+        _reinit_portaudio(sd)
+
         try:
             self._load()
             log.info("wake model loaded: key=%s framework=%s", self._key, self.cfg.wake_inference_framework)
@@ -86,8 +108,8 @@ class WakeListener:
                     gap = time.time() - last_cb[0]
                     if gap > STALL_S:
                         log.critical("mic input lost — no audio for %.0fs (device likely "
-                                     "disconnected); stopping daemon (reconnect mic + "
-                                     "restart to resume)", gap)
+                                     "disconnected); wake thread exiting, daemon stays up "
+                                     "and marks not-listening (click menu bar to retry)", gap)
                         if self.on_mic_lost:
                             self.on_mic_lost()
                         return

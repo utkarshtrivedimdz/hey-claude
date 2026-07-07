@@ -27,7 +27,7 @@ _SOUNDS = {
     "stop": "Funk", "error": "Basso",
     "listening": "Glass",   # dictation verified ON (button turned blue)
     "dropped": "Sosumi",    # dictation turned OFF externally mid-turn (mic clicked off)
-    "deaf": "Submarine",    # mic device disconnected → daemon stopping (manual restart)
+    "deaf": "Submarine",    # mic device disconnected → not-listening (click menu bar to retry)
     "dialog": "Ping",       # a Claude approval/choice box appeared (overridden by cfg at startup)
 }
 
@@ -116,6 +116,10 @@ def run(cfg, once: bool = False) -> int:
     # InputStream and macOS releases the mic. `once` arms without a wake thread at all.
     from .wake import WakeListener
     wake = {"thread": None, "listener": None}
+    # The menu bar is created later and only when use_nsapp; hold it here so tick() (already
+    # scheduled by then) can repaint the icon on a mic drop without capturing a name that
+    # doesn't exist yet.
+    ui = {"menubar": None}
 
     def _on_mic_lost():  # called from the wake thread; tick() (main thread) acts on it
         state["mic_lost"] = True
@@ -135,15 +139,31 @@ def run(cfg, once: bool = False) -> int:
             listener.stop()  # thread exits within ~0.5s and closes the InputStream (mic released)
         wake["listener"] = None
 
+    def _wake_alive() -> bool:
+        t = wake["thread"]
+        return t is not None and t.is_alive()
+
     def tick(_timer):
-        # Mic device disconnected (Bluetooth drop) → stop cleanly rather than sit deaf.
-        # Clean exit(0) + plist KeepAlive={SuccessfulExit: false} means launchd leaves it
-        # down; recovery is manual (reconnect mic + restart). A real crash still respawns.
+        # Mic device disconnected (Bluetooth drop) → the wake thread has already exited, so
+        # we're deaf. With a menu bar we stay up and just repaint the icon to not-listening;
+        # a click self-heals via _toggle (restarts the listener + re-inits PortAudio). There's
+        # nothing to auto-recover to while the mic is gone, so we don't respawn blindly.
+        # Without a menu bar there's no click-to-heal path, so fall back to a clean exit —
+        # plist KeepAlive={SuccessfulExit: false} leaves it down for a manual reconnect + restart.
         if state["mic_lost"]:
-            log.critical("mic lost — stopping daemon (clean exit; reconnect mic + restart to resume)")
-            _beep("deaf")
-            _stop_runloop()
-            return
+            mb = ui["menubar"]
+            if mb is not None:
+                state["mic_lost"] = False  # handle once; the wake thread has already exited
+                log.critical("mic lost — staying up, marked not-listening (click menu bar to retry)")
+                _beep("deaf")
+                mb.set_listening(False)
+                # fall through: sm.tick() keeps reconciling in-flight turns; no wake events
+                # arrive until a click restarts the listener.
+            else:
+                log.critical("mic lost — stopping daemon (no menu bar to self-heal; reconnect mic + restart)")
+                _beep("deaf")
+                _stop_runloop()
+                return
         drained = 0
         while True:
             try:
@@ -202,8 +222,18 @@ def run(cfg, once: bool = False) -> int:
         from .menubar import MenuBar
 
         menubar = MenuBar()
+        ui["menubar"] = menubar  # let tick() repaint the icon on a mic drop
 
         def _toggle():
+            # Self-heal: the wake thread can die without the process exiting (PortAudio
+            # crash on a device change). A click while we still believe we're listening
+            # restarts the listener — which re-inits PortAudio (see wake.py) and reopens
+            # the mic — instead of muting a thread that's already dead.
+            if state["listening"] and not _wake_alive():
+                log.warning("menu bar: click while deaf (wake thread dead) — restarting wake listener")
+                _start_wake()
+                menubar.set_listening(True)
+                return
             state["listening"] = not state["listening"]
             menubar.set_listening(state["listening"])  # repaint first — start/stop can briefly block
             if state["listening"]:

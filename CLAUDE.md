@@ -59,7 +59,7 @@ structured tuning data, not for watching). Each module uses `logging.getLogger(_
 - **INFO** — the narrative: wake→arm→dictate→sent/cancel/timeout, bootstrap result.
 - **WARNING** — degraded-but-recoverable: illegal transition, stale AX ref, empty-box abort, mic overflow.
 - **ERROR** — turn-aborting failure: bootstrap fail, observer setup fail, osascript failure.
-- **CRITICAL** — daemon-deaf: the wake thread crashed.
+- **CRITICAL** — daemon-deaf: the wake thread crashed, or the mic dropped (daemon stays up, menu bar flips to not-listening; click to self-heal).
 
 Enable verbose: `python -m hey_claude --debug` or `HEY_CLAUDE_DEBUG=1`. Default is INFO.
 

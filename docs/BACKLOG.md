@@ -72,8 +72,37 @@ Actionable task list (the aspirational roadmap lives in
   `{SuccessfulExit: false}` so a clean stop stays down (manual reconnect + restart)
   while a real crash still respawns. Flow: disconnect → beep + stop; reconnect →
   `launchctl kickstart`/reload to resume (mic re-binds to the live device on startup).
-  *Deferred:* auto self-heal (re-open on reconnect) — revisit only if the manual flow
-  gets tedious.
+
+- [x] **In-process recovery from a wedged audio HAL (deaf without a process restart).**
+  Done 2026-07-07. Follow-up to the item above: a second incident (2026-07-07) showed a
+  *different* failure than the stall watchdog covers. PortAudio raised at **stream-open**
+  (`PaErrorCode -9986`) when the Buds dropped mid-reconnect — caught by `wake.py`'s generic
+  `except` (thread exits, logs CRITICAL), so the process stayed **alive but deaf** and
+  `on_mic_lost` never fired (launchd's `SuccessfulExit:false` never got its clean exit).
+  Worse: because sounddevice initializes PortAudio **once at import** and caches the device
+  list, that process could **never** reopen the input again — every retry (incl. manual
+  menu-bar toggles) returned `-9986`, while a *fresh* process opened the same device
+  instantly. **Fix:** `wake.py:_reinit_portaudio` runs `sd._terminate()`+`sd._initialize()`
+  at the start of every wake-thread `run()`, re-enumerating devices so a (re)start sees
+  current topology; and `__main__._toggle` now self-heals — a click while listening-but-deaf
+  restarts the listener (one click, not two) instead of muting a dead thread. This *reverses*
+  the earlier "deferred auto self-heal" note for the crash-at-open case. Verify: crash the
+  wake thread via a Bluetooth drop, reconnect, click once → `mic stream open` succeeds in
+  the same process (no restart).
+
+- [x] **Stall watchdog stays up instead of exiting (unify with the click-to-heal path).**
+  Done 2026-07-07. The stall watchdog (first item above) still cleanly exited on a mic drop
+  while the crash-at-open path (second item) stayed up and self-healed — two behaviors for
+  the same user-visible event (Buds dropped). Now the watchdog matches: on `mic_lost`,
+  `__main__.tick` keeps the process alive, plays the `deaf` beep once, and repaints the menu
+  bar icon to not-listening (`set_listening(False)`) instead of stopping the run loop; a
+  click self-heals via the existing `_toggle` branch (`state["listening"]` stays `True`, so
+  the click-while-deaf case fires → restart listener + re-init PortAudio). The clean-exit
+  path is now only the fallback when the menu bar is **disabled** (no icon to click), where
+  `KeepAlive={SuccessfulExit:false}` still leaves it down for a manual restart. Verified
+  end-to-end 2026-07-07: drop → icon flips + daemon stays up → reconnect + one click →
+  `mic stream open` in the same process, twice in a row. This closes the "deferred auto
+  self-heal" note on the first item for the stall path too.
 
 - [ ] **LaunchAgent as a signed `.app` bundle** for clean TCC identity — the
   raw-`python`-binary Mic/Accessibility grant for launchd is finicky. Only if the

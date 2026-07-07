@@ -19,9 +19,10 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart on a crash (non-zero exit), but NOT on a clean exit(0). hey-claude exits 0
-         when the mic device disconnects (Bluetooth drop) so it stops instead of running
-         deaf; SuccessfulExit=false leaves it down for a manual reconnect + restart. -->
+    <!-- Restart on a crash (non-zero exit), but NOT on a clean exit(0). With the menu bar on
+         (the default), a mic disconnect no longer exits — the daemon stays up and flips the
+         icon to not-listening. Only the menu-bar-disabled path still exits 0 on mic loss;
+         SuccessfulExit=false then leaves it down for a manual reconnect + restart. -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>

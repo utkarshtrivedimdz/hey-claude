@@ -46,8 +46,9 @@ single-user, always listening.[^wakeword]
   timeout, or external interruption ends the turn silently.
 - **Dictation fixups** — a substitution map corrects common mishearings
   (e.g. "clod code" → "Claude Code") before the prompt is sent.
-- **Mic-drop resilience** — if your Bluetooth mic disconnects mid-session, hey-claude stops
-  cleanly instead of running deaf; reconnect and run `hey-claude-restart` to resume.
+- **Mic-drop resilience** — if your Bluetooth mic disconnects mid-session, hey-claude stays
+  up and flips the menu bar to not-listening instead of running deaf; reconnect and click the
+  icon to resume (the click restarts the listener and re-inits the audio stack).
 - **Telemetry for tuning** — every turn appends a structured, redactable JSONL event
   (audio is never stored) so you can tune the wake threshold and command precision.
 
@@ -111,9 +112,14 @@ launchctl load ~/Library/LaunchAgents/com.hey-claude.plist
 ## Restart / recovery
 
 The daemon opens the mic once at startup and binds to the current default input. If
-that device disappears (Bluetooth headset drops), hey-claude **stops cleanly** rather than
-sit there deaf — the `KeepAlive={SuccessfulExit: false}` LaunchAgent leaves it down so
-recovery is deliberate. Reconnect the mic, then:
+that device disappears (Bluetooth headset drops), the wake thread exits but **the daemon
+stays up** and flips the menu bar icon to not-listening rather than sitting there silently
+deaf. Reconnect the mic, then **click the menu bar icon** — that self-heals: it restarts the
+listener and re-inits the audio stack, binding to whatever input is now current.
+
+If you run with the menu bar disabled (bare run loop, no icon to click), the mic drop instead
+**stops the daemon cleanly** — the `KeepAlive={SuccessfulExit: false}` LaunchAgent leaves it
+down so recovery is deliberate. Reconnect the mic, then:
 
 ```bash
 hey-claude-restart      # kicks the daemon and prints which input device it bound to
@@ -121,8 +127,8 @@ hey-claude-restart      # kicks the daemon and prints which input device it boun
 
 `hey-claude-restart` ([`scripts/hey-claude-restart.sh`](scripts/hey-claude-restart.sh), aliased in
 `~/.zshrc` by setup) restarts via `launchctl` and reports the mic so you can confirm it
-grabbed the headset — not a silent HDMI/virtual fallback. Reconnect *before* restarting;
-starting with no input device leaves it deaf. A genuine crash still auto-restarts.
+grabbed the headset — not a silent HDMI/virtual fallback. Reconnect *before* restarting or
+clicking; starting with no input device leaves it deaf. A genuine crash still auto-restarts.
 
 ## Debug logging
 
@@ -186,8 +192,9 @@ Hard-won from the first live ride (2026-07-06):
 - **`overflow=True` / dropped audio** — bursty Bluetooth delivery; the callback+queue
   capture handles it (heartbeat should show `overflows=0`, ~25 chunks/2s).
 - **"hey jarvis" stops working after unplugging the headset** — by design: a mic
-  disconnect stops the daemon (look for `mic input lost` in `daemon.err.log`). Reconnect
-  and run `hey-claude-restart` (see [Restart / recovery](#restart--recovery)).
+  disconnect flips the menu bar icon to not-listening (look for `mic input lost` in
+  `daemon.err.log`). Reconnect and click the icon to resume, or run `hey-claude-restart`
+  if the menu bar is disabled (see [Restart / recovery](#restart--recovery)).
 - **Command word ends up in the sent prompt** — dictation writes "Okay. Send." with
   punctuation; the token-based matcher strips it. If a new command word misfires,
   check `box_pre_strip` in the telemetry.
