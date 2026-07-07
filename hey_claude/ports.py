@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Callable, Optional, Protocol, Tuple, runtime_checkable
 
 from .appstate import Tab
+from .dialog import DialogBox
 
 
 @runtime_checkable
@@ -35,6 +36,10 @@ class AXPort(Protocol):
     def press_dictation(self) -> None: ...                 # unconditional AXPress (a request)
     def observe_dictation(self, on_change: Callable[[bool], None]) -> bool: ...
     def stop_observing_dictation(self) -> None: ...
+    # dialog detection (Phase 1): per-session scan → DialogBox|None (settle_s retries staleness)
+    def find_dialog(self, settle_s: float = ...) -> Optional[DialogBox]: ...
+    def observe_dialog(self, on_change: Callable[[Optional[DialogBox]], None]) -> bool: ...
+    def stop_observing_dialog(self) -> None: ...
 
 
 @runtime_checkable

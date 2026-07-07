@@ -30,7 +30,11 @@ from CoreFoundation import (
     kCFRunLoopDefaultMode,
 )
 
+from .dialog import DialogBox, NUMBERED, classify
+
 log = logging.getLogger(__name__)
+
+_UNSCANNED = object()  # signature sentinel: observer hasn't scanned yet (distinct from None)
 
 
 def _app_element(bundle_id: str):
@@ -98,8 +102,11 @@ class RealAX:
         self._dict_on = cfg.dictation_button_desc_on
         self._box_obs = _Observer("observe_box")
         self._dict_obs = _Observer("observe_dictation")
+        self._dialog_obs = _Observer("observe_dialog")
         self._box_cb: Optional[Callable[[str], None]] = None
         self._dict_cb: Optional[Callable[[bool], None]] = None
+        self._dialog_cb: Optional[Callable[[Optional[DialogBox]], None]] = None
+        self._last_dialog_sig = _UNSCANNED  # signature-debounce for the dialog observer
 
     def set_manual_a11y(self) -> None:
         el, _ = _app_element(self.bundle_id)
@@ -314,3 +321,161 @@ class RealAX:
     def stop_observing_dictation(self) -> None:
         self._dict_cb = None
         self._dict_obs.detach()
+
+    # ---- dialog detection (Phase 1, per-session scan) --------------------
+    # NOTE: the per-session-container scan below was designed from a live probe (DIALOG-STATE-PLAN
+    # §6) but its probe scripts were not committed — re-verify end-to-end on a running VS Code with
+    # a real approval AND a split-pane choice box before trusting it (Phase-1 handover item).
+
+    def _session_title(self, node) -> Optional[str]:
+        """Nearest ancestor AXGroup with a non-empty AXTitle = the owning session container (§6).
+
+        Walks up via AXParent. Stops at the FIRST titled AXGroup — that's the per-session
+        boundary, below the shared workbench AXWebArea (whose title is the active editor and must
+        NOT be used to scope, §6). Bounded so a cycle/deep tree can't spin.
+        """
+        cur = node
+        for _ in range(60):
+            cur = _get(cur, "AXParent")
+            if cur is None:
+                return None
+            if _get(cur, "AXRole") == "AXGroup":
+                title = _get(cur, "AXTitle")
+                if title:
+                    return title
+        return None
+
+    def _under_tabgroup(self, node) -> bool:
+        """True if `node` is an editor TAB (an AXRadioButton inside an AXTabGroup), not a choice
+        radio. Tabs share the AXRadioButton role; excluding them keeps classify from mis-reading a
+        tab strip as a choice box. Stops at the session AXGroup so a real choice radio returns False.
+        """
+        cur = node
+        for _ in range(8):
+            cur = _get(cur, "AXParent")
+            if cur is None:
+                return False
+            role = _get(cur, "AXRole")
+            if role == "AXTabGroup":
+                return True
+            if role == "AXGroup" and _get(cur, "AXTitle"):
+                return False
+        return False
+
+    def _scan_dialogs(self) -> Optional[DialogBox]:
+        """One pass: group numbered buttons + non-tab radios by session container → classify each.
+
+        Returns the FOCUSED session's box if it has one; else the first other visible session's box
+        (attribution preserved on DialogBox.session — a box in a non-focused split pane is still
+        detected). No cross-pane merge: every control is bucketed by its own session title.
+        """
+        el, _ = _app_element(self.bundle_id)
+        if el is None:
+            return None
+        AXUIElementSetAttributeValue(el, "AXManualAccessibility", True)
+        focused = _get(el, "AXFocusedUIElement")
+        focused_session = self._session_title(focused) if focused is not None else None
+
+        groups: dict[str, list[dict]] = {}
+        from collections import deque
+        q = deque([el])
+        seen = 0
+        while q:
+            node = q.popleft()
+            seen += 1
+            if seen > 40000:
+                log.warning("_scan_dialogs: node budget hit (40000 nodes)")
+                break
+            try:
+                role = _get(node, "AXRole")
+                if role == "AXButton":
+                    label = _get(node, "AXTitle") or _get(node, "AXDescription")
+                    if label and NUMBERED.match(label):
+                        sess = self._session_title(node)
+                        if sess:
+                            groups.setdefault(sess, []).append({
+                                "role": "AXButton", "label": label,
+                                "enabled": bool(_get(node, "AXEnabled")), "selected": False,
+                            })
+                elif role == "AXRadioButton" and not self._under_tabgroup(node):
+                    label = _get(node, "AXTitle") or _get(node, "AXValue")
+                    sess = self._session_title(node)
+                    if sess:
+                        groups.setdefault(sess, []).append({
+                            "role": "AXRadioButton",
+                            "label": label if isinstance(label, str) else "",
+                            "enabled": bool(_get(node, "AXEnabled")),
+                            "selected": _get(node, "AXValue") == 1,
+                        })
+            except Exception as e:
+                log.debug("_scan_dialogs: node raised, skipped: %r", e)
+            for c in (_get(node, "AXChildren") or []):
+                q.append(c)
+
+        boxes = {s: classify(raw, session=s) for s, raw in groups.items()}
+        boxes = {s: b for s, b in boxes.items() if b is not None}
+        if not boxes:
+            return None
+        if focused_session in boxes:
+            return boxes[focused_session]
+        return next(iter(boxes.values()))
+
+    def find_dialog(self, settle_s: float = 0.3) -> Optional[DialogBox]:
+        """Scan for an open box, retrying until `settle_s` elapses (webview is stale post-render).
+
+        A box short-circuits the retry; only the None case spends the full budget — which doubles
+        as the "require None to persist" anti-flicker before a RESOLVE (§6, loophole #5) and the
+        Path-B settle window after a raise (§4, callers pass settle_s≈1.5). Returns None only if no
+        box was seen across the whole window.
+        """
+        deadline = settle_s
+        waited = 0.0
+        while True:
+            box = self._scan_dialogs()
+            if box is not None:
+                return box
+            if waited >= deadline:
+                return None
+            time.sleep(0.05)
+            waited += 0.05
+
+    def _dialog_signature(self, box: Optional[DialogBox]):
+        """Hashable identity of a box for the observer's debounce (ignore no-op refires)."""
+        if box is None:
+            return None
+        return (box.type, box.session, box.options, box.submit, box.submit_enabled, box.selected)
+
+    def observe_dialog(self, on_change: Callable[[Optional[DialogBox]], None]) -> bool:
+        """App-root AXObserver on AXFocusedUIElementChanged (§2): both box types fire it on
+        appear/resolve. Signature-debounced so an unrelated focus change doesn't re-announce.
+        Attach ONLY while VS Code is foreground (the caller enforces via AppState).
+        """
+        el, pid = _app_element(self.bundle_id)
+        if el is None or pid is None:
+            log.error("observe_dialog: %s not running (pid=%s)", self.bundle_id, pid)
+            return False
+        self._dialog_cb = on_change
+        self._last_dialog_sig = _UNSCANNED
+
+        @objc.callbackFor(AXObserverCreate)
+        def handler(observer, element, notification, refcon):
+            # Fires on every focus change (frequent). Do ONE scan in the common path — cheap. Only
+            # when it's a box→None edge (a potential RESOLVE, which a webview flicker could fake) do
+            # we confirm with a single short re-scan before believing it (anti-flicker, loophole #5).
+            box = self._scan_dialogs()
+            if box is None and self._last_dialog_sig not in (None, _UNSCANNED):
+                time.sleep(0.08)
+                box = self._scan_dialogs()
+            sig = self._dialog_signature(box)
+            if sig != self._last_dialog_sig:
+                self._last_dialog_sig = sig
+                log.debug("dialog observer: change → %r", box)
+                if self._dialog_cb is not None:
+                    self._dialog_cb(box)
+
+        return self._dialog_obs.attach(pid, el, "AXFocusedUIElementChanged", handler)
+
+    def stop_observing_dialog(self) -> None:
+        self._dialog_cb = None
+        self._last_dialog_sig = _UNSCANNED
+        self._dialog_obs.detach()

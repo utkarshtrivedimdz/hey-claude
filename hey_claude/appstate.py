@@ -92,6 +92,10 @@ class AppStateMachine:
     def on_terminate(self) -> None:
         self._transition(AppState.NOT_RUNNING, "did_terminate")
 
+    def set_on_change(self, cb: Optional[Callable[[AppState, AppState], None]]) -> None:
+        """Wire the transition callback after construction (runtime attaches dialog attach/detach)."""
+        self._on_change = cb
+
     # ---- queries ---------------------------------------------------------
     @property
     def is_foreground(self) -> bool:

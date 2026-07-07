@@ -68,6 +68,15 @@ arm_s = 8.0            # max time ARMED (dictation requested) before auto-disarm
                        # on a command word or a button-off event (OS/user turning the mic off).
 correction_window_ms = 5000
 
+[dialog]
+# Sense Claude Code's approval/choice boxes and announce them (Phase 1: announce-only).
+# Detection works only while VS Code is stably foreground (the panel's a11y tree collapses
+# when it's backgrounded); "Hey Jarvis" is the bridge that raises it back into view.
+enabled = true
+announce_sound = "Ping"        # macOS system sound played when a box appears
+reconcile_interval_s = 2.5     # backstop sweep that snaps state to UI truth if an event dropped;
+                               # 0 disables it (rely on events only)
+
 [menubar]
 # A menu bar icon (waveform) whose click toggles wake listening on/off. "Off" fully
 # stops the wake listener so macOS releases the mic (the orange mic dot disappears).

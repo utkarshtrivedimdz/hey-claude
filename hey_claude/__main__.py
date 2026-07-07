@@ -28,6 +28,7 @@ _SOUNDS = {
     "listening": "Glass",   # dictation verified ON (button turned blue)
     "dropped": "Sosumi",    # dictation turned OFF externally mid-turn (mic clicked off)
     "deaf": "Submarine",    # mic device disconnected → daemon stopping (manual restart)
+    "dialog": "Ping",       # a Claude approval/choice box appeared (overridden by cfg at startup)
 }
 
 
@@ -52,25 +53,48 @@ def _find_config(explicit: str | None) -> str | None:
 def _build(cfg):
     from .ax import RealAX
     from .keys import RealKeys
-    from .system import RealSystem
+    from .system import RealSystem, AppFocusObserver
     from .bootstrap import Bootstrap
+    from .appstate import AppStateMachine, AppState
+    from .reconcile import Reconciler
 
     system = RealSystem(cfg)
     ax = RealAX(cfg)
     keys = RealKeys(cfg.keymap)
     boot = Bootstrap(system, cfg)
     tel = Telemetry(cfg)
+    appstate = AppStateMachine()  # the foreground gate (§3a)
     sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel, beep=_beep,
-                      fixups=fixups_from_config(cfg))
+                      fixups=fixups_from_config(cfg), appstate=appstate)
+    reconciler = Reconciler(cfg, system, ax, sm, appstate)
+    focus = AppFocusObserver(cfg, system, appstate)
+
+    # Foreground is the correctness gate: the dialog observer is only trustworthy while VS Code is
+    # frontmost, so attach it on →FOREGROUND and detach (freeze) on →BACKGROUND/→NOT_RUNNING. A
+    # →FOREGROUND after a relaunch re-attaches to the NEW pid (loophole #3); find_dialog/observe
+    # re-assert AXManualAccessibility on the fresh element themselves.
+    def _on_appstate_change(old, new):
+        if not cfg.dialog_enabled:
+            return
+        if new is AppState.FOREGROUND:
+            log.info("VS Code FOREGROUND → attach dialog observer + refresh tabs")
+            ax.observe_dialog(sm.on_dialog_change)
+            reconciler.tabs = system.list_tabs()
+        else:
+            log.info("VS Code %s → detach dialog observer (freeze dialog state)", new.value)
+            ax.stop_observing_dialog()
+    appstate.set_on_change(_on_appstate_change)
+
     ax.set_manual_a11y()  # unlock the a11y tree at startup (per-process, resets on VS Code relaunch)
-    return sm, ax
+    return sm, ax, focus, reconciler
 
 
 def run(cfg, once: bool = False) -> int:
     from Foundation import NSTimer
     from CoreFoundation import CFRunLoopGetCurrent, CFRunLoopStop, CFRunLoopRun
 
-    sm, ax = _build(cfg)
+    _SOUNDS["dialog"] = cfg.dialog_announce_sound  # honor [dialog] announce_sound
+    sm, ax, focus, reconciler = _build(cfg)
     q: "queue.Queue[float]" = queue.Queue()
     # use_nsapp: run under NSApplication (menu bar toggle) rather than a bare run loop.
     # Only the daemon needs it; --once stays on CFRunLoopRun so its tested smoke path
@@ -143,6 +167,17 @@ def run(cfg, once: bool = False) -> int:
                 _stop_runloop()
 
     NSTimer.scheduledTimerWithTimeInterval_repeats_block_(0.12, True, tick)
+
+    # Dialog sensing (Phase 1): the AppFocusObserver seeds AppState from current reality and drives
+    # attach/detach of the dialog observer (via the _build on_change hook); the reconciler timer is
+    # the foreground-gated backstop sweep (§5) that snaps the FSMs to UI truth if an event dropped.
+    if cfg.dialog_enabled:
+        focus.start()
+        interval = cfg.dialog_reconcile_interval_s
+        if interval > 0:
+            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(
+                interval, True, lambda _t: reconciler.tick())
+            log.info("dialog reconciler armed: every %.1fs (foreground-gated)", interval)
 
     if once:
         log.info("--once: arming now (no wake word) — dictate a prompt then say your command word")

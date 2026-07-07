@@ -17,8 +17,10 @@ from enum import Enum
 from typing import Callable, Optional
 
 from .actions import Actions
+from .appstate import AppState, AppStateMachine
 from .bootstrap import BootstrapResult
 from .commands import Fixups
+from .dialog import DialogBox
 
 log = logging.getLogger(__name__)
 
@@ -28,17 +30,22 @@ class S(Enum):
     ARMED = "armed"
     DICTATING = "dictating"
     ACTING = "acting"
+    DIALOG = "dialog"    # a Claude approval/choice box is open (reactive, foreground-gated)
 
 
 # Declared legal transitions — the single source of truth for state changes.
 # Every value in `_transition` is asserted against this table (HARDENING-PLAN Phase 1).
 # DICTATING → ACTING on a command match; ACTING → IDLE once Actions.perform runs.
 # DICTATING → IDLE remains for the silence/arm-timeout backstops (no dispatch).
+# S.DIALOG is reactive (Claude-initiated), entered only from IDLE (a box appearing
+# mid-DICTATING is masked — loophole #7). DIALOG→DIALOG is the wake-refresh self-edge
+# (re-raise + re-announce). Resolve (DIALOG→IDLE) is foreground-gated in on_dialog_change.
 LEGAL: dict[S, set[S]] = {
-    S.IDLE: {S.ARMED},
+    S.IDLE: {S.ARMED, S.DIALOG},
     S.ARMED: {S.IDLE, S.DICTATING},
     S.DICTATING: {S.IDLE, S.ACTING},
     S.ACTING: {S.IDLE},
+    S.DIALOG: {S.IDLE, S.DIALOG},
 }
 
 
@@ -53,6 +60,7 @@ class StateMachine:
         beep: Callable[[str], None] = lambda kind: None,
         fixups: Optional[Fixups] = None,
         strict: bool = False,
+        appstate: Optional[AppStateMachine] = None,
     ):
         self.cfg = cfg
         self.bootstrap = bootstrap
@@ -64,6 +72,9 @@ class StateMachine:
         self._mono = monotonic
         self._beep = beep
         self._strict = strict  # test builds raise on an illegal transition; prod only logs
+        # The foreground gate (§3a). Injected so tests drive it; defaults to a fresh machine.
+        # The dialog-resolve path reads is_foreground to tell "resolved" from "went blind".
+        self.appstate = appstate or AppStateMachine()
 
         self.state = S.IDLE  # initial state — set directly; every later change goes via _transition
         self._wake_ts: Optional[float] = None
@@ -71,13 +82,23 @@ class StateMachine:
         self._boot: Optional[BootstrapResult] = None
         self._pending_wake: Optional[float] = None  # score of the accepted wake, awaiting resolution
         self._last_send: Optional[tuple] = None      # (turn_id, monotonic_ts)
+        self._dialog: Optional[DialogBox] = None     # the currently-open box (stash), if S.DIALOG
 
     # ---- events ----------------------------------------------------------
     def on_wake(self, score: float) -> None:
         thr = self.cfg.wake_threshold
         accepted = score >= thr
+        if self.state is S.DIALOG:
+            # Wake in DIALOG is the escape hatch (§5) — NOT swallowed by the self-trigger
+            # guard. It re-raises VS Code and re-evaluates the box (backstop for a missed
+            # resolve event that would otherwise wedge the daemon deaf).
+            if accepted:
+                self._wake_in_dialog(score, thr)
+            else:
+                self.tel.log_wake(score, thr, False, followed_through=False)
+            return
         if self.state is not S.IDLE:
-            # self-trigger guard (FR-1): ignore wake while armed/dictating.
+            # self-trigger guard (FR-1): ignore wake while armed/dictating/acting.
             log.debug("wake %.3f ignored — state=%s (self-trigger guard)", score, self.state.value)
             self.tel.log_wake(score, thr, accepted, followed_through=False, note="ignored_active")
             return
@@ -103,6 +124,20 @@ class StateMachine:
             self._log_turn("error", None, None, None, 0)
             self._transition(S.IDLE, "bootstrap_failed")
             return
+
+        # Path B (§4): bootstrap raised VS Code, so a pending Claude box is now visible. If one
+        # is open it covers the input — detect it BEFORE dictation (this also turns the old
+        # "Voice-dictation button not found" abort into the correct branch). find_dialog retries
+        # ~1.5s to outlast the ~560ms webview rebuild after the raise.
+        if self.cfg.dialog_enabled:
+            box = self.ax.find_dialog(settle_s=1.5)  # outlast the ~560ms webview rebuild post-raise
+            if box is not None:
+                log.info("Path-B: %s box present after raise → DIALOG (session=%r), no dictation",
+                         box.type, box.session)
+                self._resolve_wake(True)
+                self._transition(S.IDLE, "dialog_redirect")  # unwind the arm; we're not dictating
+                self._enter_dialog(box)
+                return
 
         self.keys.cmd_esc()   # focus Claude input
         # The Voice-dictation button is the ground truth for the DICTATING state.
@@ -149,6 +184,43 @@ class StateMachine:
                      m.action, m.prefix, m.target, m.strip_len)
             self._act(m, text)
 
+    def on_dialog_change(self, box: Optional[DialogBox]) -> None:
+        """Ground-truth dialog state from the observer (or the reconciler / wake-refresh).
+
+        Appear is trusted; RESOLVE (box→None) is **foreground-gated** — a box reads None both
+        when it resolves AND when VS Code backgrounds and the webview tree collapses, so we only
+        believe a resolve while the app is FOREGROUND (loophole #6). Mid-DICTATING appears are
+        masked (loophole #7). Phase 1 is announce-only — no auto-answering yet.
+        """
+        if box is not None:
+            if self.state is S.IDLE:
+                self._enter_dialog(box)
+            elif self.state is S.DIALOG:
+                # A different box (session/type changed) while already in DIALOG → update stash.
+                if box != self._dialog:
+                    log.info("dialog changed while open: %r → %r", self._dialog, box)
+                    self._dialog = box
+                    self.tel.log_dialog("appear", box.type, len(box.options),
+                                        self.appstate.is_foreground)
+            else:
+                log.debug("dialog appear ignored — state=%s (mid-turn mask)", self.state.value)
+            return
+
+        # box is None → candidate resolve.
+        if self.state is not S.DIALOG:
+            log.debug("dialog None ignored — state=%s (not in DIALOG)", self.state.value)
+            return
+        if not self.appstate.is_foreground:
+            # Backgrounded, not resolved — hold DIALOG, never a false resolve (§5, loophole #6).
+            log.info("dialog None while %s — holding DIALOG (blind, not a resolve)",
+                     self.appstate.state.value)
+            return
+        self._resolve_dialog()
+
+    def current_dialog(self) -> Optional[DialogBox]:
+        """The open box stash — read by the reconciler to detect a stale/changed dialog."""
+        return self._dialog
+
     def tick(self) -> None:
         # No silence timeout while DICTATING: the button is the sole authority for the
         # dictation lifetime. A turn ends only on a command word or a button-off event
@@ -164,6 +236,50 @@ class StateMachine:
                 self._beep("error")
                 self._resolve_wake(False)
                 self._transition(S.IDLE, "arm_timeout")
+
+    # ---- dialog internals ------------------------------------------------
+    def _enter_dialog(self, box: DialogBox) -> None:
+        """IDLE → DIALOG: stash the box, announce it (beep), record telemetry."""
+        self._dialog = box
+        self._transition(S.DIALOG, "dialog_appeared")
+        self._beep("dialog")
+        self.tel.log_dialog("appear", box.type, len(box.options), self.appstate.is_foreground)
+        log.info("DIALOG entered: %s box, %d option(s), session=%r",
+                 box.type, len(box.options), box.session)
+
+    def _resolve_dialog(self) -> None:
+        """DIALOG → IDLE (foreground-verified by the caller). Clears the stash."""
+        box = self._dialog
+        self._dialog = None
+        self.tel.log_dialog("resolve", box.type if box else None,
+                            len(box.options) if box else None, True)
+        self._transition(S.IDLE, "dialog_resolved")
+        log.info("DIALOG resolved → IDLE")
+
+    def _wake_in_dialog(self, score: float, thr: float) -> None:
+        """Wake while a box is open: re-raise VS Code and re-evaluate (§5 escape hatch)."""
+        self.tel.log_wake(score, thr, True, followed_through=True, note="dialog_refresh")
+        boot = self.bootstrap.ensure_ready()  # raises VS Code → tree rebuilds
+        if not boot.ok:
+            log.error("wake-in-DIALOG: bootstrap failed — staying in DIALOG")
+            self._beep("error")
+            return
+        box = self.ax.find_dialog(settle_s=1.5) if self.cfg.dialog_enabled else None
+        if box is None:
+            # None after a raise: resolve only if we're foreground (else still blind — hold).
+            if self.appstate.is_foreground:
+                log.info("wake-in-DIALOG: box gone (foreground) → resolving")
+                self._resolve_dialog()
+            else:
+                log.info("wake-in-DIALOG: box None but %s — holding DIALOG",
+                         self.appstate.state.value)
+            return
+        # Still a box → re-announce (and refresh the stash if it changed).
+        self._dialog = box
+        self._transition(S.DIALOG, "wake_refresh")  # self-edge breadcrumb
+        self._beep("dialog")
+        self.tel.log_dialog("refresh", box.type, len(box.options), self.appstate.is_foreground)
+        log.info("wake-in-DIALOG: %s box still present → re-announced", box.type)
 
     # ---- internals -------------------------------------------------------
     def _enter_dictating(self) -> None:

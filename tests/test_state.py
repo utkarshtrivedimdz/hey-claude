@@ -1,6 +1,7 @@
 """FR-6 state machine — transitions, strip ops, self-trigger, disarm, corrections."""
 import pytest
 
+from hey_claude.appstate import AppStateMachine
 from hey_claude.config import Config
 from hey_claude.commands import from_config, Fixups
 from hey_claude.state import StateMachine, S, LEGAL, IllegalTransition
@@ -8,7 +9,7 @@ from hey_claude.bootstrap import BootstrapResult
 from tests.fakes import FakeClock, FakeKeys, FakeAX, FakeBootstrap, FakeTelemetry
 
 
-def make(boot=None, fixups=None, ax=None, beeps=None):
+def make(boot=None, fixups=None, ax=None, beeps=None, appstate=None):
     cfg = Config()
     cfg.command_prefix = ["okay"]
     clock = FakeClock()
@@ -16,9 +17,13 @@ def make(boot=None, fixups=None, ax=None, beeps=None):
     ax = ax if ax is not None else FakeAX()
     boot = boot or FakeBootstrap()
     beep = (lambda k: beeps.append(k)) if beeps is not None else (lambda k: None)
+    if appstate is None:
+        appstate = AppStateMachine()
+        appstate.on_activate()  # default: VS Code foreground (the common case)
     # strict=True so an illegal transition is a hard failure in tests (prod only logs).
     sm = StateMachine(cfg, boot, keys, ax, from_config(cfg), tel,
-                      monotonic=clock.now, fixups=fixups, strict=True, beep=beep)
+                      monotonic=clock.now, fixups=fixups, strict=True, beep=beep,
+                      appstate=appstate)
     return sm, cfg, clock, keys, ax, tel, boot
 
 
@@ -242,3 +247,118 @@ def test_bootstrap_failure_emits_armed_then_idle():
         ("idle", "armed", "wake_accepted"),
         ("armed", "idle", "bootstrap_failed"),
     ]
+
+
+# ---- Phase 1: dialog sensing ---------------------------------------------
+
+from hey_claude.dialog import DialogBox
+
+APPROVAL = DialogBox(type="approval", session="proj", options=("1 Yes", "2 Yes, allow", "3 No"))
+CHOICE = DialogBox(type="choice", session="proj", options=("A", "B"),
+                   submit="1 Submit answers", submit_enabled=False)
+
+
+def test_observer_appear_from_idle_enters_dialog_and_announces():
+    beeps: list = []
+    sm, cfg, clock, keys, ax, tel, boot = make(beeps=beeps)
+    sm.on_dialog_change(APPROVAL)
+    assert sm.state is S.DIALOG
+    assert sm.current_dialog() == APPROVAL
+    assert beeps[-1] == "dialog"
+    assert tel.dialogs[-1] == dict(event="appear", box_type="approval",
+                                   n_options=3, foreground=True)
+    # Phase 1 is announce-only: no keystrokes, no press.
+    assert keys.ops == [] and ax.pressed == []
+
+
+def test_resolve_while_foreground_returns_to_idle():
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_dialog_change(APPROVAL)
+    assert sm.state is S.DIALOG
+    sm.on_dialog_change(None)                 # box gone, VS Code foreground
+    assert sm.state is S.IDLE
+    assert sm.current_dialog() is None
+    assert tel.dialogs[-1]["event"] == "resolve"
+
+
+def test_resolve_suppressed_while_backgrounded():
+    # Loophole #6: box reads None because VS Code backgrounded — NOT a resolve.
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_dialog_change(APPROVAL)
+    sm.appstate.on_deactivate()               # VS Code → background → tree collapses
+    sm.on_dialog_change(None)
+    assert sm.state is S.DIALOG               # held, not resolved
+    assert sm.current_dialog() == APPROVAL
+    # then it comes back foreground and the box is really still there → still DIALOG
+    sm.appstate.on_activate()
+    sm.on_dialog_change(APPROVAL)
+    assert sm.state is S.DIALOG
+
+
+def test_path_b_wake_with_pending_dialog_enters_dialog_not_dictation():
+    # A pending box covers the input; the old code aborted "button not found". Now Path-B
+    # catches it after the raise and enters DIALOG instead of dictating.
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    sm.on_wake(0.9)
+    assert sm.state is S.DIALOG
+    assert "press_dictation" not in ax.ops    # never started dictation
+    assert not ax.box_observing
+    reasons = [(t["frm"], t["to"], t["reason"]) for t in tel.transitions]
+    assert reasons == [
+        ("idle", "armed", "wake_accepted"),
+        ("armed", "idle", "dialog_redirect"),
+        ("idle", "dialog", "dialog_appeared"),
+    ]
+
+
+def test_wake_in_dialog_resolves_when_box_gone():
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    sm.on_dialog_change(APPROVAL)
+    assert sm.state is S.DIALOG
+    ax.set_dialog(None)                       # box was answered by mouse; resolve event missed
+    sm.on_wake(0.9)                           # wake escape hatch re-checks
+    assert sm.state is S.IDLE                 # foreground + gone → resolved
+    assert tel.wakes[-1]["note"] == "dialog_refresh"
+
+
+def test_wake_in_dialog_reannounces_when_box_still_present():
+    beeps: list = []
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax, beeps=beeps)
+    sm.on_dialog_change(APPROVAL)
+    beeps.clear()
+    sm.on_wake(0.9)                           # box still there
+    assert sm.state is S.DIALOG
+    assert beeps == ["dialog"]                # re-announced
+    assert tel.dialogs[-1]["event"] == "refresh"
+
+
+def test_wake_in_dialog_is_not_swallowed_by_self_trigger_guard():
+    # Unlike ARMED/DICTATING, a wake in DIALOG must act (not be ignored as a self-trigger).
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    sm.on_dialog_change(APPROVAL)
+    n_boot = boot.calls
+    sm.on_wake(0.9)
+    assert boot.calls == n_boot + 1           # it re-raised (bootstrap), didn't no-op
+
+
+def test_dialog_appear_mid_dictating_is_masked():
+    # Loophole #7: a box appearing while dictating is ignored (low-code punt).
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_wake(0.9)
+    assert sm.state is S.DICTATING
+    sm.on_dialog_change(CHOICE)
+    assert sm.state is S.DICTATING            # not hijacked into DIALOG
+    assert sm.current_dialog() is None
+
+
+def test_dialog_disabled_skips_path_b_check():
+    ax = FakeAX(dialog=APPROVAL)
+    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+    cfg.dialog_enabled = False
+    sm.on_wake(0.9)
+    # dialog sensing off → normal dictation flow, box ignored
+    assert sm.state is S.DICTATING

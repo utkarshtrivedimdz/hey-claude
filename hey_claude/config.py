@@ -84,6 +84,13 @@ class Config:
 
     keymap: dict = field(default_factory=_default_keymap)
 
+    # dialog sensing (Phase 1): detect Claude's approval/choice boxes and announce them.
+    # reconcile_interval_s is the periodic backstop sweep (§5) — foreground-gated re-read that
+    # snaps the FSMs to UI truth if an event was dropped; 0 disables it (events only).
+    dialog_enabled: bool = True
+    dialog_announce_sound: str = "Ping"        # macOS system sound played when a box appears
+    dialog_reconcile_interval_s: float = 2.5   # 0 = off
+
     # menu bar (UI): a status-bar icon whose click toggles wake listening on/off.
     # "off" fully stops the wake listener so macOS releases the mic. Set false to run
     # headless (no NSStatusItem, original bare run loop).
@@ -151,6 +158,12 @@ def load(path: Optional[str] = None) -> Config:
     cfg.target_title_substr = tgt.get("title_substr", cfg.target_title_substr)
 
     cfg.keymap = {**cfg.keymap, **data.get("keymap", {})}
+
+    dlg = data.get("dialog", {})
+    cfg.dialog_enabled = bool(dlg.get("enabled", cfg.dialog_enabled))
+    cfg.dialog_announce_sound = dlg.get("announce_sound", cfg.dialog_announce_sound)
+    cfg.dialog_reconcile_interval_s = float(
+        dlg.get("reconcile_interval_s", cfg.dialog_reconcile_interval_s))
 
     mb = data.get("menubar", {})
     cfg.menubar_enabled = bool(mb.get("enabled", cfg.menubar_enabled))

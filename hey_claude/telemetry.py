@@ -109,6 +109,15 @@ class Telemetry:
             "within_ms": int(within_ms), "inferred": inferred,
         })
 
+    def log_dialog(self, event, box_type=None, n_options=None, foreground=None) -> None:
+        # Dialog sense/announce trace (Phase 1). `event` in {appear, resolve, refresh,
+        # reconcile_appear, reconcile_resolve}. `foreground` records the AppState gate at the
+        # moment, so a suspicious "resolve while background" is greppable.
+        self._emit({
+            "event": "dialog", "dialog_event": event, "box_type": box_type,
+            "n_options": n_options, "foreground": foreground,
+        })
+
     def log_transition(self, frm, to, reason, mono, illegal=False) -> None:
         # State-change trace (FR-6 / HARDENING-PLAN Phase 1). Cheap: ~3 records/turn.
         self._emit({

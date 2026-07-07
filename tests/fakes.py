@@ -40,7 +40,7 @@ class FakeAX:
     """
 
     def __init__(self, value: str = "", dict_on: bool = False, button_present: bool = True,
-                 press_found: bool = True):
+                 press_found: bool = True, dialog=None):
         self.value = value
         self.box_observing = False
         self._box_cb = None
@@ -51,6 +51,9 @@ class FakeAX:
         self.press_found = press_found   # what press_by_name returns
         self.pressed: list = []          # (keyword, roles) recorded per press_by_name call
         self.ops: list = []   # dictation ops (press_dictation)
+        self._dialog = dialog            # what find_dialog() returns (a DialogBox or None)
+        self.dialog_observing = False
+        self._dialog_cb = None
 
     def set_manual_a11y(self): pass
     def read_box(self): return self.value
@@ -105,6 +108,29 @@ class FakeAX:
         if self.dict_observing and self._dict_cb:
             self._dict_cb(is_on)
 
+    # dialog detection (Phase 1)
+    def find_dialog(self, settle_s: float = 0.3):
+        return self._dialog
+
+    def set_dialog(self, box):
+        """Set what find_dialog() reads (does NOT fire the observer — for reconciler/Path-B)."""
+        self._dialog = box
+
+    def observe_dialog(self, on_change):
+        self.dialog_observing = True
+        self._dialog_cb = on_change
+        return True
+
+    def stop_observing_dialog(self):
+        self.dialog_observing = False
+        self._dialog_cb = None
+
+    def feed_dialog(self, box):
+        """Simulate an AXFocusedUIElementChanged dialog event (fires the observer callback)."""
+        self._dialog = box
+        if self.dialog_observing and self._dialog_cb:
+            self._dialog_cb(box)
+
 
 class FakeBootstrap:
     def __init__(self, result: BootstrapResult | None = None):
@@ -122,6 +148,7 @@ class FakeTelemetry:
         self.turns: list = []
         self.corrections: list = []
         self.transitions: list = []
+        self.dialogs: list = []
         self._n = 0
 
     def log_wake(self, score, threshold, accepted, followed_through=None, note=None):
@@ -141,6 +168,10 @@ class FakeTelemetry:
     def log_transition(self, frm, to, reason, mono, illegal=False):
         self.transitions.append(dict(frm=frm, to=to, reason=reason,
                                      mono=mono, illegal=illegal))
+
+    def log_dialog(self, event, box_type=None, n_options=None, foreground=None):
+        self.dialogs.append(dict(event=event, box_type=box_type,
+                                 n_options=n_options, foreground=foreground))
 
 
 class FakeSystem:
