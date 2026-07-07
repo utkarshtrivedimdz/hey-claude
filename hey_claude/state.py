@@ -109,6 +109,7 @@ class StateMachine:
 
         # accepted + idle → arm
         log.info("wake accepted %.3f ≥ %.3f → arming", score, thr)
+        was_fg = self.appstate.is_foreground  # already-foreground vs bridging-from-background
         self._pending_wake = score
         self._wake_ts = self._arm_ts = self._mono()
         self._transition(S.ARMED, "wake_accepted")  # centralized "armed" beep fires here
@@ -127,10 +128,14 @@ class StateMachine:
 
         # Path B (§4): bootstrap raised VS Code, so a pending Claude box is now visible. If one
         # is open it covers the input — detect it BEFORE dictation (this also turns the old
-        # "Voice-dictation button not found" abort into the correct branch). find_dialog retries
-        # ~1.5s to outlast the ~560ms webview rebuild after the raise.
+        # "Voice-dictation button not found" abort into the correct branch).
+        #
+        # Only pay the ~1.5s settle window when we BRIDGED FROM BACKGROUND (the webview tree
+        # rebuilds ~560ms after the raise). If VS Code was already foreground, the live observer
+        # would already have moved us to DIALOG, so a pending box can't be here — a single instant
+        # scan (settle 0) confirms and we go straight to dictation with no per-wake stall.
         if self.cfg.dialog_enabled:
-            box = self.ax.find_dialog(settle_s=1.5)  # outlast the ~560ms webview rebuild post-raise
+            box = self.ax.find_dialog(settle_s=(1.5 if not was_fg else 0.0))
             if box is not None:
                 log.info("Path-B: %s box present after raise → DIALOG (session=%r), no dictation",
                          box.type, box.session)
@@ -259,12 +264,14 @@ class StateMachine:
     def _wake_in_dialog(self, score: float, thr: float) -> None:
         """Wake while a box is open: re-raise VS Code and re-evaluate (§5 escape hatch)."""
         self.tel.log_wake(score, thr, True, followed_through=True, note="dialog_refresh")
-        boot = self.bootstrap.ensure_ready()  # raises VS Code → tree rebuilds
+        was_fg = self.appstate.is_foreground  # bridging-from-background needs the rebuild settle
+        boot = self.bootstrap.ensure_ready()  # raises VS Code → tree rebuilds (if it was blind)
         if not boot.ok:
             log.error("wake-in-DIALOG: bootstrap failed — staying in DIALOG")
             self._beep("error")
             return
-        box = self.ax.find_dialog(settle_s=1.5) if self.cfg.dialog_enabled else None
+        settle = 1.5 if not was_fg else 0.0
+        box = self.ax.find_dialog(settle_s=settle) if self.cfg.dialog_enabled else None
         if box is None:
             # None after a raise: resolve only if we're foreground (else still blind — hold).
             if self.appstate.is_foreground:

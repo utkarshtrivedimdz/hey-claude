@@ -322,119 +322,88 @@ class RealAX:
         self._dict_cb = None
         self._dict_obs.detach()
 
-    # ---- dialog detection (Phase 1, per-session scan) --------------------
-    # NOTE: the per-session-container scan below was designed from a live probe (DIALOG-STATE-PLAN
-    # §6) but its probe scripts were not committed — re-verify end-to-end on a running VS Code with
-    # a real approval AND a split-pane choice box before trusting it (Phase-1 handover item).
+    # ---- dialog detection (Phase 1, focused-session scan) ----------------
+    # Scoped to the FOCUSED Claude session's container (nearest titled AXGroup ancestor of the
+    # focused element) — a small subtree, so this is cheap enough to run on every focus event
+    # without walking VS Code's whole (huge) a11y tree. Scoping to one container also makes the
+    # split-pane MERGE bug (#4) impossible — we never cross panes. A box in a NON-focused pane is
+    # deferred to Phase 4 (background-tab awareness); Phases 1-3 act on the focused session.
+    # NOTE: the container boundary was designed from a live probe (§6) whose scripts weren't
+    # committed — it is re-verified live in Phase 1.
 
-    def _session_title(self, node) -> Optional[str]:
-        """Nearest ancestor AXGroup with a non-empty AXTitle = the owning session container (§6).
+    def _focused_container(self):
+        """(container_element, session_title) for the focused Claude session, or (None, None).
 
-        Walks up via AXParent. Stops at the FIRST titled AXGroup — that's the per-session
-        boundary, below the shared workbench AXWebArea (whose title is the active editor and must
-        NOT be used to scope, §6). Bounded so a cycle/deep tree can't spin.
-        """
-        cur = node
-        for _ in range(60):
-            cur = _get(cur, "AXParent")
-            if cur is None:
-                return None
-            if _get(cur, "AXRole") == "AXGroup":
-                title = _get(cur, "AXTitle")
-                if title:
-                    return title
-        return None
-
-    def _under_tabgroup(self, node) -> bool:
-        """True if `node` is an editor TAB (an AXRadioButton inside an AXTabGroup), not a choice
-        radio. Tabs share the AXRadioButton role; excluding them keeps classify from mis-reading a
-        tab strip as a choice box. Stops at the session AXGroup so a real choice radio returns False.
-        """
-        cur = node
-        for _ in range(8):
-            cur = _get(cur, "AXParent")
-            if cur is None:
-                return False
-            role = _get(cur, "AXRole")
-            if role == "AXTabGroup":
-                return True
-            if role == "AXGroup" and _get(cur, "AXTitle"):
-                return False
-        return False
-
-    def _scan_dialogs(self) -> Optional[DialogBox]:
-        """One pass: group numbered buttons + non-tab radios by session container → classify each.
-
-        Returns the FOCUSED session's box if it has one; else the first other visible session's box
-        (attribution preserved on DialogBox.session — a box in a non-focused split pane is still
-        detected). No cross-pane merge: every control is bucketed by its own session title.
+        Walks up from AXFocusedUIElement to the nearest AXGroup with a non-empty AXTitle = the
+        per-session boundary (below the shared workbench AXWebArea, which must NOT scope — §6).
         """
         el, _ = _app_element(self.bundle_id)
         if el is None:
-            return None
+            return None, None
         AXUIElementSetAttributeValue(el, "AXManualAccessibility", True)
-        focused = _get(el, "AXFocusedUIElement")
-        focused_session = self._session_title(focused) if focused is not None else None
+        cur = _get(el, "AXFocusedUIElement")
+        for _ in range(60):
+            if cur is None:
+                break
+            if _get(cur, "AXRole") == "AXGroup":
+                title = _get(cur, "AXTitle")
+                if title:
+                    return cur, title
+            cur = _get(cur, "AXParent")
+        return None, None
 
-        groups: dict[str, list[dict]] = {}
+    def _scan_focused(self) -> Optional[DialogBox]:
+        """Collect numbered buttons + radios within the focused session container → classify.
+
+        No tab-radio exclusion needed: the editor tab strip (AXTabGroup) lives ABOVE the session
+        container, so a within-container walk never sees a tab radio.
+        """
+        container, session = self._focused_container()
+        if container is None:
+            return None
         from collections import deque
-        q = deque([el])
+        raw: list[dict] = []
+        q = deque([container])
         seen = 0
         while q:
             node = q.popleft()
             seen += 1
-            if seen > 40000:
-                log.warning("_scan_dialogs: node budget hit (40000 nodes)")
+            if seen > 4000:  # one session subtree is tiny; this only guards a pathological tree
+                log.warning("_scan_focused: node budget hit (4000 nodes)")
                 break
             try:
                 role = _get(node, "AXRole")
                 if role == "AXButton":
                     label = _get(node, "AXTitle") or _get(node, "AXDescription")
                     if label and NUMBERED.match(label):
-                        sess = self._session_title(node)
-                        if sess:
-                            groups.setdefault(sess, []).append({
-                                "role": "AXButton", "label": label,
-                                "enabled": bool(_get(node, "AXEnabled")), "selected": False,
-                            })
-                elif role == "AXRadioButton" and not self._under_tabgroup(node):
+                        raw.append({"role": "AXButton", "label": label,
+                                    "enabled": bool(_get(node, "AXEnabled")), "selected": False})
+                elif role == "AXRadioButton":
                     label = _get(node, "AXTitle") or _get(node, "AXValue")
-                    sess = self._session_title(node)
-                    if sess:
-                        groups.setdefault(sess, []).append({
-                            "role": "AXRadioButton",
-                            "label": label if isinstance(label, str) else "",
-                            "enabled": bool(_get(node, "AXEnabled")),
-                            "selected": _get(node, "AXValue") == 1,
-                        })
+                    raw.append({"role": "AXRadioButton",
+                                "label": label if isinstance(label, str) else "",
+                                "enabled": bool(_get(node, "AXEnabled")),
+                                "selected": _get(node, "AXValue") == 1})
             except Exception as e:
-                log.debug("_scan_dialogs: node raised, skipped: %r", e)
+                log.debug("_scan_focused: node raised, skipped: %r", e)
             for c in (_get(node, "AXChildren") or []):
                 q.append(c)
-
-        boxes = {s: classify(raw, session=s) for s, raw in groups.items()}
-        boxes = {s: b for s, b in boxes.items() if b is not None}
-        if not boxes:
-            return None
-        if focused_session in boxes:
-            return boxes[focused_session]
-        return next(iter(boxes.values()))
+        return classify(raw, session=session)
 
     def find_dialog(self, settle_s: float = 0.3) -> Optional[DialogBox]:
-        """Scan for an open box, retrying until `settle_s` elapses (webview is stale post-render).
+        """Scan the focused session for an open box, retrying until `settle_s` elapses.
 
-        A box short-circuits the retry; only the None case spends the full budget — which doubles
-        as the "require None to persist" anti-flicker before a RESOLVE (§6, loophole #5) and the
-        Path-B settle window after a raise (§4, callers pass settle_s≈1.5). Returns None only if no
-        box was seen across the whole window.
+        A box short-circuits immediately; only the None case spends the budget — which doubles as
+        the "require None to persist" anti-flicker before a RESOLVE (§6, #5) and the Path-B
+        post-raise settle window (§4). Callers that are ALREADY foreground pass settle_s≈0 (there's
+        no webview rebuild to wait out), so a no-dialog wake doesn't stall for the settle window.
         """
-        deadline = settle_s
         waited = 0.0
         while True:
-            box = self._scan_dialogs()
+            box = self._scan_focused()
             if box is not None:
                 return box
-            if waited >= deadline:
+            if waited >= settle_s:
                 return None
             time.sleep(0.05)
             waited += 0.05
@@ -459,13 +428,13 @@ class RealAX:
 
         @objc.callbackFor(AXObserverCreate)
         def handler(observer, element, notification, refcon):
-            # Fires on every focus change (frequent). Do ONE scan in the common path — cheap. Only
-            # when it's a box→None edge (a potential RESOLVE, which a webview flicker could fake) do
-            # we confirm with a single short re-scan before believing it (anti-flicker, loophole #5).
-            box = self._scan_dialogs()
+            # Fires on every focus change (frequent). One small focused-container scan — cheap. Only
+            # on a box→None edge (a potential RESOLVE, which a webview flicker could fake) do we
+            # confirm with a single short re-scan before believing it (anti-flicker, loophole #5).
+            box = self._scan_focused()
             if box is None and self._last_dialog_sig not in (None, _UNSCANNED):
                 time.sleep(0.08)
-                box = self._scan_dialogs()
+                box = self._scan_focused()
             sig = self._dialog_signature(box)
             if sig != self._last_dialog_sig:
                 self._last_dialog_sig = sig
