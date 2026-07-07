@@ -242,13 +242,73 @@ sequenceDiagram
     WS->>AF: DidActivateApplication(VS Code)
     AF->>AX: attach observer (now trustworthy)
     VS->>AX: AXFocusedUIElementChanged (box appears)
-    AX->>AX: find_dialog() → box; sig changed
+    AX->>AX: find_dialog() → box · sig changed
     AX->>SM: on_dialog_change(box)  [FG ✓]
     SM->>SM: IDLE → DIALOG · beep("dialog")
     WS->>AF: DidDeactivateApplication(VS Code)
     AF->>AX: detach + mark blind (freeze state)
     Note over AX,SM: collapse-to-None is IGNORED while blind
 ```
+
+### Periodic reconciler — the backstop sweep (every N s)
+
+Events are the sensor; **this is the safety net.** Event-driven detection drifts
+*silently* whenever an event is dropped — a wedged `AXObserver`, a lost NSWorkspace
+notification, a tree-rebuild race, or any unforeseen class. The doc patches *specific*
+misses (wake-in-DIALOG refresh for #2, relaunch re-attach for #3) but has **no general
+backstop**. Add a slow **reconciliation loop** (Kubernetes-style: *observed UI = desired,
+in-memory state = actual, snap actual→desired on mismatch*). It does **not** replace
+event detection — events keep ~ms latency; the reconciler only **bounds worst-case
+staleness to N** and repairs drift no event will ever correct.
+
+This is *not* the "never a timer" the doc warns against: that rule bans timers **as the
+detection mechanism**. The reconciler never detects first — it only *reconciles* what
+events already should have set. Defense-in-depth, not a poll.
+
+Each tick, **only if `AppState is FOREGROUND`** (a background read is untrustworthy —
+skipping the tick when blind is what keeps this from re-opening loophole #6):
+
+1. **Ground the gate first.** Re-read `frontmost_bundle_id()`. If it disagrees with
+   `AppState` (we believe `FOREGROUND` but VS Code isn't frontmost, or vice-versa), a
+   `DidActivate`/`DidDeactivate` was missed → drive `AppState` through the legal
+   transition before trusting anything downstream.
+2. **Reconcile the dialog.** Re-read `find_dialog()` (per-session) and compare to what `S`
+   believes:
+   - believe `IDLE`, truth = box → **missed appear** → `on_dialog_change(box)`.
+   - believe `DIALOG`, truth = `None` (persisted one beat) → **missed resolve** →
+     `on_dialog_change(None)`. This is the *general* form of loophole #2 — it subsumes the
+     wake-refresh backstop; wake stays the fast/explicit escape hatch, this is the passive
+     one that fires even if you never speak.
+   - believe `DIALOG(box A)`, truth = box B (different session/type) → correct the stash.
+3. **Refresh Tabs.** Re-read `list_tabs()` and replace the snapshot wholesale (it's
+   already a pure snapshot — a cheap overwrite; catches a missed
+   `AXSelectedChildrenChanged` or badge change).
+
+```mermaid
+flowchart LR
+    T[timer tick · every N s] --> G{AppState<br/>FOREGROUND?}
+    G -->|no| skip[skip — blind read untrustworthy]
+    G -->|yes| F[re-read frontmost_bundle_id]
+    F -->|mismatch| af[drive AppState transition]
+    F --> D[re-read find_dialog per-session]
+    D -->|differs from S| oc["on_dialog_change(truth)<br/>via existing chokepoint"]
+    D --> TB[re-read list_tabs → replace snapshot]
+```
+
+**Constraints (so it can't reintroduce a closed bug):**
+- **Foreground-gated** — skip the whole tick unless `FOREGROUND` (else false-resolve, #6).
+- **Through the chokepoints** — it calls `on_dialog_change` / the `AppState` transition
+  methods, never a side door, so `LEGAL` + the anti-flicker "require `None` to persist"
+  rule (§6, #5) still apply. The reconciler is pure I/O + comparison; it *drives* the FSMs,
+  it doesn't mutate them.
+- **Idempotent & slow** — `N ≈ 2–3 s`. When in-memory == truth (the overwhelming common
+  case) the tick is a **no-op**; it only ever writes on genuine mismatch.
+- **Logged as `reconcile:` transitions** — every correction is greppable
+  (`reconcile: DIALOG→IDLE, missed resolve`). Frequency is itself a **health signal**: a
+  reconciler that fires often means an observer is broken upstream.
+
+Owned by `__main__.py` (same place that wires the observers), gated by `AppState`.
+Config: `[dialog] reconcile_interval_s` (`0` = off).
 
 ---
 
@@ -326,8 +386,8 @@ loophole #5).
 | **`system.py`** | NSWorkspace activate/deactivate/launch/terminate observer → feeds `AppStateMachine`; `list_tabs()` from the `AXTabGroup`. |
 | **`ports.py`** | `AXPort` += dialog methods + `list_tabs`; `SystemPort` += app-focus event callback. |
 | **`state.py`** | `S.DIALOG`; `LEGAL`; `on_dialog_change(box|None)` **gated on `AppState is FOREGROUND`**; `_enter_dialog` (beep+stash+telemetry); wake-in-DIALOG refresh; Path-B `find_dialog` check in `on_wake` after bootstrap. Reads `AppStateMachine` (injected). |
-| **`config.py`** | `[dialog]` (`enabled`, `announce_sound`). |
-| **`__main__.py`** | build `AppStateMachine`; wire the NSWorkspace observer → it; on its `→FOREGROUND`/`→BACKGROUND` transitions attach/detach `observe_dialog` + refresh `Tabs`; `"dialog"` beep. |
+| **`config.py`** | `[dialog]` (`enabled`, `announce_sound`, `reconcile_interval_s`). |
+| **`__main__.py`** | build `AppStateMachine`; wire the NSWorkspace observer → it; on its `→FOREGROUND`/`→BACKGROUND` transitions attach/detach `observe_dialog` + refresh `Tabs`; `"dialog"` beep; own the **reconciler timer** (§5, foreground-gated re-read → drive FSMs via chokepoints). |
 | **`telemetry.py`** | `log_dialog(event, box_type, n_options, foreground)`. |
 
 ---
@@ -348,7 +408,9 @@ loophole #5).
    dialogs: "is VS Code up front?", "which session is active?").
 1. **Sense + announce** — `dialog.classify` (+ tests), `find_dialog`/`observe_dialog`
    (foreground-gated), `S.DIALOG`, `_enter_dialog` beep, resolve→IDLE, Path-B wake check,
-   wake-in-DIALOG refresh, `[dialog]` config, `FakeAX`/`FakeSystem` support + state tests.
+   wake-in-DIALOG refresh, **reconciler timer** (§5 backstop sweep), `[dialog]` config,
+   `FakeAX`/`FakeSystem` support + state tests (incl. a fake-clock reconcile test:
+   drop an event, tick, assert the FSM snaps to truth).
 2. **Answer approval** — `approve`/`reject`/`allow` → press.
 3. **Answer choice** — `AXValueChanged` selection tracking + `option/submit` (gated).
 4. **Background-tab awareness** — announce off the tab **badge** while VS Code foreground.
@@ -364,8 +426,9 @@ loophole #5).
 | 8 | our-`AXPress` / mouse resolve fires no event | proven: `AXPress` resolve fires `AXFocusedUIElementChanged` ×2, `find_dialog→None +370ms` → `DIALOG→IDLE` auto-fires | ✅ verified |
 | 9 | transcript-history phantom buttons | proven: answered prompts expose **no** numbered buttons/radios (25s scan, stayed 0) | ✅ verified |
 | 10 | Path-B: `find_dialog` right after raise reads empty tree | **measured 560 ms** raise→readable → Path B retries `find_dialog` up to ~1.5 s after `raise_app` | ✅ verified |
-| 2 | missed resolve → stuck `DIALOG` → deaf | **wake-in-DIALOG refresh** (§5) is the escape hatch/backstop | 🟡 build |
-| 3 | observer dies on VS Code relaunch | `AppState` re-attaches the dialog observer on `DidLaunch`/`→FOREGROUND` (new pid) | 🟡 build |
+| 2 | missed resolve → stuck `DIALOG` → deaf | **wake-in-DIALOG refresh** (explicit) **+ periodic reconciler** (§5, passive — fires without you speaking) | 🟡 build |
+| 3 | observer dies on VS Code relaunch | `AppState` re-attaches the dialog observer on `DidLaunch`/`→FOREGROUND` (new pid); **reconciler** catches any tick where re-attach was missed | 🟡 build |
+| 11 | **any** unforeseen dropped event → in-memory FSM/Tabs drift from UI truth | **periodic reconciler** (§5): foreground-gated re-read of `frontmost`/`find_dialog`/`list_tabs`, snap FSMs to truth via existing chokepoints; bounds staleness to N; fire-rate is a health signal | 🟡 build |
 | 4 | whole-window walk → merge (splits expose **both** panes' controls!) | **per-session-container scan** (§6): classify each session's `AXGroup`-titled subtree independently, attribute each box to its session — no merge across panes/tabs/windows. Boundary probed & confirmed | ✅ verified (structure) |
 | 5 | webview staleness → miss / flicker | **retry on read + require None to persist** before RESOLVE (§6) | 🟡 build |
 | 7 | mid-`DICTATING` dialog | low-code mask (ignore unless `IDLE`) — accepted punt | 🟠 punted |
