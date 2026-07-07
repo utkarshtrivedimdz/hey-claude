@@ -71,6 +71,19 @@ def test_cancel_clears_and_does_not_submit():
     assert tel.turns[-1]["outcome"] == "cancelled"
 
 
+def test_press_by_name_routes_through_dictation_and_axpresses():
+    sm, cfg, clock, keys, ax, tel, boot = make()
+    sm.on_wake(0.9)
+    assert sm.state is S.DICTATING
+    ax.feed("okay press submit")                      # dictated dialog command
+    assert sm.state is S.IDLE
+    assert ax.pressed == [("submit", ("AXButton", "AXRadioButton"))]
+    assert "clear" in keys.names()                    # command text wiped, never submitted
+    assert "ret" not in keys.names()
+    assert tel.turns[-1]["outcome"] == "pressed"
+    assert tel.turns[-1]["command"] == "press"
+
+
 def test_bootstrap_failure_aborts_before_keystrokes():
     boot = FakeBootstrap(BootstrapResult(ok=False, cold_start=False, ms=9, focus_gate="abort"))
     sm, cfg, clock, keys, ax, tel, _ = make(boot=boot)

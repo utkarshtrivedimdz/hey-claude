@@ -33,19 +33,19 @@ Actionable task list (the aspirational roadmap lives in
   no longer disarms. (A VAD off-ramp is no longer needed for this; the `arm_s` ceiling
   still backstops a false wake that never turns the button on.)
 
-- [ ] **Press-by-name via AXPress.** Verified 2026-07-06: when a tab is active,
-  Claude Code's question dialogs expose their options as `AXRadioButton` and the
-  `Submit answers` / `Close` as `AXButton`, all with the `AXPress` action — and
-  panel controls (`Voice dictation`, `New session`, `Add`, `Bypass permissions`)
-  are `AXPress`-able too. Add commands that (a) find an element whose label contains
-  a spoken keyword and `AXPress` it, (b) `AXPress` a named button. Enables answering
-  choice/permission dialogs and hitting panel buttons entirely by voice.
-  - **Constraint:** only the ACTIVE tab is in the AX tree — a dialog in a background
-    tab is invisible; the command must focus that tab first (or fail with a cue).
-  - **Bonus — DONE 2026-07-06:** dictation now `AXPress`es the `Voice dictation` button
-    instead of `Cmd+D` (killed the multi-cursor collision) and reads its AXDescription /
-    AXTitleChanged as ground truth. The reusable `_find_element` finder in `hey_claude/ax.py`
-    is ready for the press-by-name commands above. See DICTATION-AX-PLAN.md.
+- [x] **Press-by-name via AXPress.** Done 2026-07-07 (see PRESS-BY-NAME-PLAN.md).
+  `"<prefix> press <label>"` (e.g. "okay press submit", "okay press yes") AXPresses the
+  first `AXButton`/`AXRadioButton` whose label *contains* the spoken keyword — answers
+  Claude Code choice/permission dialogs and hits panel buttons by voice. Reuses the
+  dictate→observe-box loop: the phrase is dictated in, matched by `Commands.match_press`,
+  and instead of sending, `RealAX.press_by_name` walks the AX tree (`_bfs_find`, extracted
+  from `_find_element`) and presses; the dictated command text is cleared, never submitted.
+  Config: `[commands] press_verbs` / `press_roles`.
+  - **Constraint (still open):** only the ACTIVE tab is in the AX tree — a dialog in a
+    background tab is invisible; we fail with the error beep + a log line, we do NOT yet
+    focus the tab first. Follow-up below.
+- [ ] **Press-by-name: focus the target tab first** when the control isn't in the active
+  tab's AX tree (today: fail with a cue). Needs tab enumeration + activation.
 - [ ] Keystroke fallback for widgets that don't expose `AXPress` (↑/↓ + Enter, Esc).
 
 ## UX

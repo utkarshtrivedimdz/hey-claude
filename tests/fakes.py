@@ -39,7 +39,8 @@ class FakeAX:
     `dictation_on` return None (the fail-loud path).
     """
 
-    def __init__(self, value: str = "", dict_on: bool = False, button_present: bool = True):
+    def __init__(self, value: str = "", dict_on: bool = False, button_present: bool = True,
+                 press_found: bool = True):
         self.value = value
         self.box_observing = False
         self._box_cb = None
@@ -47,11 +48,17 @@ class FakeAX:
         self.dict_observing = False
         self._dict_cb = None
         self.button_present = button_present
+        self.press_found = press_found   # what press_by_name returns
+        self.pressed: list = []          # (keyword, roles) recorded per press_by_name call
         self.ops: list = []   # dictation ops (press_dictation)
 
     def set_manual_a11y(self): pass
     def read_box(self): return self.value
     def read_box_settled(self): return self.value
+
+    def press_by_name(self, keyword, roles=("AXButton", "AXRadioButton")):
+        self.pressed.append((keyword, tuple(roles)))
+        return self.press_found
 
     # box textarea observer
     def observe_box(self, on_change):

@@ -34,10 +34,11 @@ class ActionOutcome:
 
 
 class Actions:
-    def __init__(self, keys, ax, fixups: Optional[Fixups] = None):
+    def __init__(self, keys, ax, fixups: Optional[Fixups] = None, press_roles=None):
         self.keys = keys
         self.ax = ax
         self.fixups = fixups or Fixups()
+        self.press_roles = tuple(press_roles) if press_roles else ("AXButton", "AXRadioButton")
 
     def _trace(self, label: str) -> None:
         """DISPATCH-TRACE: log the live box so we can see each keystroke's effect."""
@@ -60,6 +61,11 @@ class Actions:
                  m.action, m.strip_len, m.post_text, text)
         self.ax.stop_observing_box()  # our own keystrokes must not re-trigger command match
         self._trace("after stop_observing_box (dictation still live)")
+
+        if m.action == "press":
+            # press owns its own mic-off ordering (frees the mic BEFORE clearing the box),
+            # so it returns directly rather than falling through to the trailing mic-off.
+            return self._press(m)
 
         if m.action == "send":
             out = self._send(m)
@@ -104,3 +110,30 @@ class Actions:
         self.keys.ret()
         self._trace("after Return (empty/placeholder ⇒ sent)")
         return ActionOutcome("sent", "send", strip=m.strip_len, box_post=m.post_text)
+
+    def _press(self, m) -> ActionOutcome:
+        """AXPress the control whose label contains `m.target`; clear the dictated command.
+
+        Unlike send, press does NOT submit the box — the phrase "okay press submit" is
+        junk we must not leave behind. The interim dictation text re-commits into the box
+        after mic-off, so we free the mic first, wait out that re-commit, then clear the
+        box, and finally AXPress the target (an action on the element ref, focus-independent).
+        """
+        target = (m.target or "").strip()
+        if not target:
+            log.warning("'press' matched but no target label — no-op abort")
+            return ActionOutcome("no_target", "error", strip=m.strip_len, box_post="")
+
+        if self.ax.dictation_on():
+            self.ax.press_dictation()
+            self._trace("after mic off (press)")
+        self.ax.read_box_settled()   # wait out the post-dictation re-commit before clearing
+        self.keys.clear()            # remove the dictated command text so it never lingers
+        self._trace("after clear (press)")
+
+        ok = self.ax.press_by_name(target, self.press_roles)
+        self._trace(f"after AXPress {target!r} ok={ok}")
+        if ok:
+            return ActionOutcome("pressed", "send", strip=m.strip_len, box_post="")
+        log.warning("press: no control matched %r — nothing pressed", target)
+        return ActionOutcome("not_found", "error", strip=m.strip_len, box_post="")

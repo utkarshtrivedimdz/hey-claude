@@ -23,11 +23,12 @@ _EDGE_PUNCT = ".,!?;:\"')(“”‘’…"
 
 @dataclass
 class Match:
-    action: str        # "send" | "cancel" | "stop"
+    action: str        # "send" | "cancel" | "stop" | "press"
     phrase: str        # matched trailing substring in the original text (incl. leading ws)
     strip_len: int     # chars to backspace from the end to remove `phrase`
     post_text: str     # box text after strip (rstripped) — what actually gets sent
     prefix: Optional[str] = None  # the disambiguation prefix used, if any
+    target: Optional[str] = None  # for "press": the spoken label to match against a control
 
 
 class Commands:
@@ -36,6 +37,7 @@ class Commands:
         words: Dict[str, List[str]],
         prefixes: Optional[List[str]] = None,
         placeholders: Optional[List[str]] = None,
+        press_verbs: Optional[List[str]] = None,
     ):
         # each synonym → list of lowercased tokens (supports multi-word, e.g. "scratch that");
         # longest synonyms first so they win over any shorter sub-match.
@@ -45,6 +47,7 @@ class Commands:
         }
         self.prefixes = [p.lower() for p in (prefixes or []) if p]
         self.placeholders = set(placeholders or [])
+        self.press_verbs = {v.lower() for v in (press_verbs or ["press"]) if v}
 
     def match(self, text: Optional[str]) -> Optional[Match]:
         """Return the trailing command in `text`, or None. Longest match wins."""
@@ -87,9 +90,57 @@ class Commands:
                     best = cand
         return best
 
+    def match_press(self, text: Optional[str]) -> Optional[Match]:
+        """Match `<prefix> press <label>` — the label is everything spoken after the verb.
+
+        Unlike `match` (trailing fixed words), press takes an argument: the target label
+        follows the verb. We scan from the end for the last press verb that satisfies the
+        prefix requirement, then take the normalized tokens after it as the target. Returns
+        None if there's no verb, no valid prefix, or an empty label ("okay press" alone).
+        """
+        if not text:
+            return None
+        stripped = text.strip()
+        if not stripped or stripped in self.placeholders:
+            return None
+        toks = [(m.start(), m.group()) for m in _TOKEN.finditer(text)]
+        norms = [raw.strip(_EDGE_PUNCT).lower() for _, raw in toks]
+        if not norms:
+            return None
+
+        for vi in range(len(norms) - 1, -1, -1):
+            if norms[vi] not in self.press_verbs:
+                continue
+            if self.prefixes:
+                if vi == 0 or norms[vi - 1] not in self.prefixes:
+                    continue
+                start_i, prefix_used = vi - 1, norms[vi - 1]
+            else:
+                start_i, prefix_used = vi, None
+
+            target = " ".join(n for n in norms[vi + 1:] if n)
+            if not target:
+                continue  # "okay press" with no label — not a press command
+
+            start = toks[start_i][0]
+            while start > 0 and text[start - 1].isspace():  # swallow leading whitespace
+                start -= 1
+            return Match(
+                action="press",
+                phrase=text[start:],
+                strip_len=len(text) - start,
+                post_text=text[:start].rstrip(),
+                prefix=prefix_used,
+                target=target,
+            )
+        return None
+
 
 def from_config(cfg) -> Commands:
-    return Commands(cfg.command_words, cfg.command_prefix, cfg.placeholders)
+    return Commands(
+        cfg.command_words, cfg.command_prefix, cfg.placeholders,
+        press_verbs=getattr(cfg, "press_verbs", None),
+    )
 
 
 class Fixups:

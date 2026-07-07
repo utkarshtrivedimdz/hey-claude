@@ -125,12 +125,12 @@ class RealAX:
         log.warning("_focused_textarea: no AXFocusedUIElement after 10 tries (ref may be stale)")
         return None, pid
 
-    def _find_element(self, root, role: str, descriptions) -> Optional[object]:
-        """Breadth-first tree walk → first element matching role + any AXDescription.
+    def _bfs_find(self, root, predicate) -> Optional[object]:
+        """Breadth-first tree walk → first element satisfying `predicate`.
 
         BFS (not DFS) so a shallow panel control is found before descending into VS
-        Code's very deep editor subtree — DFS can exhaust the node budget first.
-        Reusable for future press-a-button-by-name commands (BACKLOG press-by-name).
+        Code's very deep editor subtree — DFS can exhaust the node budget first. A
+        predicate that raises on a weird node is skipped, not fatal.
         """
         from collections import deque
         queue = deque([root])
@@ -139,13 +139,64 @@ class RealAX:
             el = queue.popleft()
             seen += 1
             if seen > 40000:
-                log.warning("_find_element: node budget hit before finding %r", descriptions)
+                log.warning("_bfs_find: node budget hit (40000 nodes)")
                 return None
-            if _get(el, "AXRole") == role and _get(el, "AXDescription") in descriptions:
-                return el
+            try:
+                if predicate(el):
+                    return el
+            except Exception as e:  # a malformed node must not abort the whole walk
+                log.debug("_bfs_find: predicate raised on a node: %r", e)
             for c in (_get(el, "AXChildren") or []):
                 queue.append(c)
         return None
+
+    def _find_element(self, root, role: str, descriptions) -> Optional[object]:
+        """First element matching an exact role + one of `descriptions` (AXDescription)."""
+        return self._bfs_find(
+            root, lambda el: _get(el, "AXRole") == role and _get(el, "AXDescription") in descriptions
+        )
+
+    def press_by_name(self, keyword: str, roles=("AXButton", "AXRadioButton")) -> bool:
+        """Find the first pressable control whose label CONTAINS `keyword` and AXPress it.
+
+        Label = AXTitle | AXDescription | AXValue, matched case-insensitively as a
+        substring (so "submit" hits the "Submit answers" button, "yes" hits a "Yes"
+        radio option). Only the ACTIVE Claude Code tab is in the AX tree — a control
+        in a background tab is invisible and this returns False (BACKLOG: focus the
+        tab first). Returns True iff a match was found and AXPress was sent.
+        """
+        kw = (keyword or "").strip().lower()
+        if not kw:
+            return False
+        el, _ = _app_element(self.bundle_id)
+        if el is None:
+            log.warning("press_by_name: %s not running", self.bundle_id)
+            return False
+        AXUIElementSetAttributeValue(el, "AXManualAccessibility", True)
+        roleset = set(roles)
+
+        def matches(node) -> bool:
+            if _get(node, "AXRole") not in roleset:
+                return False
+            for attr in ("AXTitle", "AXDescription", "AXValue"):
+                v = _get(node, attr)
+                if isinstance(v, str) and kw in v.lower():
+                    return True
+            return False
+
+        # The webview AX tree is briefly stale right after a dialog renders — retry a
+        # few times before concluding the control is absent (mirrors _dictation_button).
+        for attempt in range(6):
+            target = self._bfs_find(el, matches)
+            if target is not None:
+                label = _get(target, "AXTitle") or _get(target, "AXDescription") or _get(target, "AXValue")
+                err = AXUIElementPerformAction(target, "AXPress")
+                log.info("press_by_name: AXPress %r → %r (role=%s, err=%s)",
+                         kw, label, _get(target, "AXRole"), err)
+                return True
+            time.sleep(0.05)
+        log.warning("press_by_name: no %s element label contains %r", tuple(roles), kw)
+        return False
 
     def _dictation_button(self):
         el, pid = _app_element(self.bundle_id)

@@ -4,7 +4,7 @@ Sequencing (ACTING transition, telemetry, correction window) is tested in test_s
 here we assert only *how* each command is executed over fake keys/ax ports.
 """
 from hey_claude.actions import Actions, ActionOutcome
-from hey_claude.commands import from_config, Fixups
+from hey_claude.commands import from_config, Fixups, Match
 from hey_claude.config import Config
 from tests.fakes import FakeKeys, FakeAX
 
@@ -94,3 +94,49 @@ def test_default_fixups_is_noop():
     out = actions.perform(_match("open clot code okay send"), "open clot code okay send")
     assert keys.names()[-2:] == ["backspace", "ret"]
     assert out.box_post == "open clot code"
+
+
+# ---- press-by-name -----------------------------------------------------------
+
+def _press_match(text, **over):
+    m = _cmds(**over).match_press(text)
+    assert m is not None, f"expected a press match in {text!r}"
+    return m
+
+
+def test_press_frees_mic_clears_box_then_axpresses():
+    actions, keys, ax = make(dict_on=True)
+    ax.box_observing = True
+    out = actions.perform(_press_match("okay press submit"), "okay press submit")
+    assert not ax.box_observing                  # released the box observer
+    assert "press_dictation" in ax.ops           # mic freed BEFORE clearing…
+    assert not ax.dictation_on()                 # …so the button ends up off
+    assert "clear" in keys.names()               # dictated command text wiped
+    assert "ret" not in keys.names()             # press never submits the box
+    assert ax.pressed == [("submit", ("AXButton", "AXRadioButton"))]
+    assert out == ActionOutcome("pressed", "send", strip=out.strip, box_post="")
+
+
+def test_press_not_found_reports_error():
+    keys, ax = FakeKeys(), FakeAX(dict_on=True, press_found=False)
+    ax.box_observing = True
+    actions = Actions(keys, ax)
+    out = actions.perform(_press_match("okay press nonexistent"), "okay press nonexistent")
+    assert ax.pressed == [("nonexistent", ("AXButton", "AXRadioButton"))]
+    assert out.outcome == "not_found" and out.beep == "error"
+
+
+def test_press_empty_target_is_noop_abort():
+    actions, keys, ax = make(dict_on=True)
+    m = Match(action="press", phrase="", strip_len=0, post_text="", target="")
+    out = actions.perform(m, "okay press")
+    assert ax.pressed == []                       # never searched
+    assert "clear" not in keys.names()            # never touched the box
+    assert out.outcome == "no_target" and out.beep == "error"
+
+
+def test_press_uses_configured_roles():
+    keys, ax = FakeKeys(), FakeAX(dict_on=True)
+    actions = Actions(keys, ax, press_roles=["AXButton"])
+    actions.perform(_press_match("okay press close"), "okay press close")
+    assert ax.pressed == [("close", ("AXButton",))]

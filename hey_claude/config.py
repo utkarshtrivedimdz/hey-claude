@@ -58,6 +58,11 @@ class Config:
     command_words: dict = field(default_factory=_default_words)
     placeholders: list = field(default_factory=_default_placeholders)
 
+    # press-by-name: "<prefix> press <label>" AXPresses the control whose label contains
+    # <label>. Searches these AX roles (buttons + Claude Code dialog radio options).
+    press_verbs: list = field(default_factory=lambda: ["press"])
+    press_roles: list = field(default_factory=lambda: ["AXButton", "AXRadioButton"])
+
     # dictation fixups: mishearing → correction (case-insensitive, whole-word)
     fixups: dict = field(default_factory=dict)
 
@@ -122,6 +127,8 @@ def load(path: Optional[str] = None) -> Config:
     cfg.command_prefix = cmd.get("prefix", cfg.command_prefix)
     cfg.command_words = cmd.get("words", cfg.command_words)
     cfg.placeholders = cmd.get("placeholders", cfg.placeholders)
+    cfg.press_verbs = cmd.get("press_verbs", cfg.press_verbs)
+    cfg.press_roles = cmd.get("press_roles", cfg.press_roles)
 
     cfg.fixups = data.get("fixups", cfg.fixups)
 

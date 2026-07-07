@@ -59,7 +59,7 @@ class StateMachine:
         self.keys = keys
         self.ax = ax
         self.commands = commands
-        self.actions = Actions(keys, ax, fixups)  # owns the keystroke/AX choreography (Phase 2)
+        self.actions = Actions(keys, ax, fixups, press_roles=getattr(cfg, "press_roles", None))
         self.tel = telemetry
         self._mono = monotonic
         self._beep = beep
@@ -142,9 +142,11 @@ class StateMachine:
             log.debug("box change ignored — state=%s", self.state.value)
             return
         log.debug("box change (%d chars): %r", len(text or ""), text)
-        m = self.commands.match(text)
+        # send/cancel/stop (trailing fixed word) first; then press-by-name (verb + label arg).
+        m = self.commands.match(text) or self.commands.match_press(text)
         if m is not None:
-            log.info("command matched: %s (prefix=%s, strip=%d)", m.action, m.prefix, m.strip_len)
+            log.info("command matched: %s (prefix=%s, target=%r, strip=%d)",
+                     m.action, m.prefix, m.target, m.strip_len)
             self._act(m, text)
 
     def tick(self) -> None:

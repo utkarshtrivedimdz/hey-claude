@@ -57,3 +57,39 @@ def test_longest_match_wins_prefix_recorded():
     m = C(["okay"]).match("do the thing okay submit")
     assert m.action == "send" and m.prefix == "okay"
     assert m.post_text == "do the thing"
+
+
+# ---- press-by-name: "<prefix> press <label>" ---------------------------------
+
+@pytest.mark.parametrize(
+    "text,prefix,target",
+    [
+        ("okay press submit", ["okay"], "submit"),
+        ("okay press submit answers", ["okay"], "submit answers"),   # label to end-of-utterance
+        ("okay press yes please", ["okay"], "yes please"),
+        ("Okay. Press. Submit.", ["okay"], "submit"),                # dictation caps + punctuation
+        ("press submit", ["okay"], None),                            # no prefix ⇒ not a command
+        ("okay press", ["okay"], None),                              # verb but no label
+        ("okay send", ["okay"], None),                               # no press verb at all
+        ("go read the docs and press enter", ["okay"], None),        # "press" without the prefix
+        # BARE mode (no prefix required)
+        ("press close", [], "close"),
+        ("press", [], None),
+    ],
+)
+def test_match_press(text, prefix, target):
+    m = C(prefix).match_press(text)
+    assert (m.target if m else None) == target
+    if target is not None:
+        assert m.action == "press"
+
+
+def test_press_does_not_collide_with_send_matcher():
+    # "okay press submit" must NOT match the trailing-word matcher (so on_box_change's
+    # `match() or match_press()` order routes it to press, not send).
+    assert C(["okay"]).match("okay press submit") is None
+
+
+def test_press_target_is_normalized_lowercase():
+    m = C(["okay"]).match_press("OKAY PRESS Submit Answers")
+    assert m.target == "submit answers"

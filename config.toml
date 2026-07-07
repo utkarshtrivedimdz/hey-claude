@@ -31,6 +31,13 @@ button_desc_on  = "Stop recording"    # AXDescription when ON (blue/recording)
 # disambiguates from a prompt that legitimately ends in a command word (Q11b).
 prefix = ["okay", "ok"]
 
+# Press-by-name: "<prefix> press <label>" AXPresses the control whose label CONTAINS
+# <label> (case-insensitive), e.g. "okay press submit" → the "Submit answers" button,
+# "okay press yes" → the "Yes" radio option in a Claude Code question dialog. `press_roles`
+# is the set of AX roles searched. Only the ACTIVE Claude Code tab is in the a11y tree.
+press_verbs = ["press"]
+press_roles = ["AXButton", "AXRadioButton"]
+
 [commands.words]
 send   = ["send", "submit", "go", "enter"]
 cancel = ["cancel", "scratch that", "nevermind", "never mind", "clear", "clear all"]
