@@ -93,51 +93,13 @@ def test_external_mic_off_disarms_with_dropped_beep():
     assert tel.turns[-1]["outcome"] == "dictation_dropped"
 
 
-def test_dictation_button_missing_waits_then_aborts_loud():
-    # View not up yet (button absent) → stay ARMED awaiting the tab-open event (no blind abort,
-    # no re-reveal storm). When the view opens but the button is genuinely missing → abort loud.
-    ax = FakeAX(button_present=False)
-    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
+def test_dictation_button_missing_aborts_loud():
+    sm, cfg, clock, keys, ax, tel, boot = make(ax=FakeAX(button_present=False))
     sm.on_wake(0.9)
-    assert sm.state is S.ARMED                         # waiting for the view, not aborted
-    assert keys.names() == ["reveal_claude"]           # exactly ONE reveal, no cmd_esc yet
-    assert ax.ready_observing
-    ax.feed_ready()                                    # view opened, button still absent
     assert sm.state is S.IDLE
     assert not ax.box_observing
     assert "ret" not in keys.names()                  # never sends
     assert tel.turns[-1]["outcome"] == "error"
-
-
-def test_wake_storm_while_awaiting_ready_fires_single_reveal():
-    # The bug: from a Markdown-preview tab, continuous speech produced many wakes and each fired
-    # claude-vscode.editor.open → a pile of Claude tabs. Now a wake that can't reach dictation
-    # stays ARMED awaiting the tab-open event, so the self-trigger guard swallows every
-    # subsequent wake — one reveal, not N.
-    ax = FakeAX(button_present=False)
-    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
-    sm.on_wake(0.9)
-    assert sm.state is S.ARMED
-    for _ in range(7):
-        sm.on_wake(0.9)                                # continuous-speech wake flood
-    assert sm.state is S.ARMED
-    assert boot.calls == 1                             # armed once
-    assert keys.names().count("reveal_claude") == 1    # ONE editor.open, not 8
-
-
-def test_claude_view_opens_after_wait_then_dictates():
-    # Cold Claude view: button absent at first (ARMED, awaiting event), appears when the tab
-    # opens → the ready event drives focus + dictation without a second reveal.
-    ax = FakeAX(button_present=False)
-    sm, cfg, clock, keys, _ax, tel, boot = make(ax=ax)
-    sm.on_wake(0.9)
-    assert sm.state is S.ARMED
-    ax.button_present = True                           # tab finished opening
-    ax.feed_ready()
-    assert sm.state is S.DICTATING
-    assert keys.names() == ["reveal_claude", "cmd_esc"]  # single reveal, then focus
-    assert "press_dictation" in ax.ops
-    assert ax.box_observing
 
 
 def test_dictation_already_on_enters_dictating_without_pressing():

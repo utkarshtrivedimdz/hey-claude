@@ -104,41 +104,17 @@ class StateMachine:
             self._transition(S.IDLE, "bootstrap_failed")
             return
 
-        # Reveal the Claude editor, then WAIT for it to actually be up before probing. The
-        # focus gate is window-level (VS Code frontmost + workspace title) and passes even
-        # when a non-Claude tab (e.g. a Markdown preview) is active — its webview swallows
-        # Cmd+Esc and the Voice-dictation button is ABSENT from the tree until the Claude view
-        # opens (Q9). Cmd+Shift+Esc (the extension's built-in editor.open) brings it forward /
-        # reopens it, but that render is async: probing the button synchronously here loses the
-        # race and aborts. Worse, aborting drops straight back to IDLE, so the next wake
-        # (continuous speech) re-arms and fires editor.open AGAIN — N wakes → N new Claude tabs.
-        # Instead: fire ONE reveal, then stay ARMED and wait for the view to report ready via an
-        # AX event. Staying ARMED holds the self-trigger guard closed (on_wake ignores wakes
-        # while state != IDLE), so the storm can't happen; arm_timeout backstops a view that
-        # never opens.
-        self.keys.reveal_claude()      # reveal Claude editor (Cmd+Shift+Esc, built-in) — ONCE
-        if self.ax.dictation_on() is not None:
-            self._claude_ready()       # already up (Claude was the active editor) → no wait
-        else:
-            log.info("Claude view not ready — awaiting tab-open event (armed; arm_timeout backstops)")
-            self.ax.observe_ready(self._claude_ready)  # event-driven; fires when the button appears
-
-    def _claude_ready(self) -> None:
-        """Claude view is up — focus its input and start dictation.
-
-        Reached either synchronously from on_wake (the view was already the active editor) or
-        from the readiness observer's callback on the run loop when the tab finishes opening.
-        Idempotent against duplicate/late events: the observer is torn down first and a
-        non-ARMED state short-circuits.
-        """
-        self.ax.stop_observing_ready()
-        if self.state is not S.ARMED:
-            return  # already disarmed (arm_timeout) or advanced — ignore a late/duplicate event
-        self.keys.cmd_esc()            # focus Claude input now that the view exists
+        # Reveal the Claude editor FIRST, then focus its input. The focus gate is
+        # window-level (VS Code frontmost + workspace title) and passes even when a
+        # non-Claude tab (e.g. a Markdown preview) is active — its webview swallows
+        # Cmd+Esc and the Voice-dictation button is absent from the tree (Q9). Cmd+Shift+Esc
+        # (the extension's built-in editor.open) brings the Claude view forward / reopens it.
+        self.keys.reveal_claude()      # reveal Claude editor (Cmd+Shift+Esc, built-in)
+        self.keys.cmd_esc()            # focus Claude input
         # The Voice-dictation button is the ground truth for the DICTATING state.
         state = self.ax.dictation_on()
         if state is None:
-            log.error("Voice-dictation button not found after reveal — aborting turn, no dictation")
+            log.error("Voice-dictation button not found — aborting turn, no dictation")
             self._beep("error")
             self._resolve_wake(False)
             self._log_turn("error", None, None, None, 0)
@@ -188,7 +164,6 @@ class StateMachine:
             if armed > self.cfg.arm_timeout_s:
                 log.warning("arm timeout %.1fs > %.1fs — dictation never started, disarming",
                             armed, self.cfg.arm_timeout_s)
-                self.ax.stop_observing_ready()       # in case the Claude view never opened
                 self.ax.stop_observing_dictation()
                 self._beep("error")
                 self._resolve_wake(False)

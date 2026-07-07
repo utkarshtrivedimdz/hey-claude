@@ -98,10 +98,8 @@ class RealAX:
         self._dict_on = cfg.dictation_button_desc_on
         self._box_obs = _Observer("observe_box")
         self._dict_obs = _Observer("observe_dictation")
-        self._ready_obs = _Observer("observe_ready")
         self._box_cb: Optional[Callable[[str], None]] = None
         self._dict_cb: Optional[Callable[[bool], None]] = None
-        self._ready_cb: Optional[Callable[[], None]] = None
 
     def set_manual_a11y(self) -> None:
         el, _ = _app_element(self.bundle_id)
@@ -265,39 +263,3 @@ class RealAX:
     def stop_observing_dictation(self) -> None:
         self._dict_cb = None
         self._dict_obs.detach()
-
-    # ---- readiness (Claude view opened) ----------------------------------
-    def observe_ready(self, on_ready: Callable[[], None]) -> bool:
-        """Fire `on_ready` once the Claude view is up and its dictation button is in the tree.
-
-        Event-driven, replacing a fire-and-probe race that opened a new Claude tab per wake:
-        Cmd+Shift+Esc (claude-vscode.editor.open) moves focus into the Claude webview, which
-        emits AXFocusedUIElementChanged on the app element. On each focus change we re-scan for
-        the Voice-dictation button; when it appears the view has finished rendering, so we
-        detach (one-shot) and call back. If focus moves but the button isn't there yet, we wait
-        for the next event — the caller's arm_timeout backstops a view that never opens.
-        """
-        el, pid = _app_element(self.bundle_id)
-        if el is None or pid is None:
-            log.error("observe_ready: %s not running (pid=%s)", self.bundle_id, pid)
-            return False
-        AXUIElementSetAttributeValue(el, "AXManualAccessibility", True)
-        self._ready_cb = on_ready
-
-        @objc.callbackFor(AXObserverCreate)
-        def handler(observer, element, notification, refcon):
-            if self._ready_cb is None:
-                return
-            btn, _ = self._dictation_button()
-            if btn is None:
-                log.debug("observe_ready: focus changed but Claude view not rendered yet — waiting")
-                return
-            cb, self._ready_cb = self._ready_cb, None   # arm re-entry guard before dispatching
-            log.debug("observe_ready: Claude view ready (dictation button present)")
-            cb()  # _claude_ready() → stop_observing_ready() detaches this observer
-
-        return self._ready_obs.attach(pid, el, "AXFocusedUIElementChanged", handler)
-
-    def stop_observing_ready(self) -> None:
-        self._ready_cb = None
-        self._ready_obs.detach()

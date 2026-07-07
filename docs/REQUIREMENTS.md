@@ -316,15 +316,6 @@ durations — get settled by **data from real sessions**. Capture it locally.
   AXPress dictation**. (An earlier fix used a custom Cmd+Ctrl+Shift+J →
   `claude-vscode.editor.openLast` chord, but that needed a hand-edit and just opened a
   tab; the built-in does the same with nothing to install.)
-  **Follow-up RESOLVED (2026-07-07):** the reveal alone wasn't enough — `editor.open`
-  renders the Claude webview *asynchronously*, so probing the dictation button on the next
-  line lost the race and aborted; each abort dropped to IDLE and the next wake (continuous
-  speech) fired `editor.open` again → a pile of new Claude tabs. Fix: after the single
-  reveal, arming now **waits for the view via an AX readiness event** (`observe_ready` on
-  `AXFocusedUIElementChanged`, gated on the button appearing) instead of probing blind,
-  staying ARMED meanwhile so the self-trigger guard swallows the wake flood (N wakes → 1
-  reveal); `arm_timeout` backstops a view that never opens. Live-verified the event fires
-  reliably on reveal (ends on the `AXTextArea "Message input"`).
 - **Q10 Can hey-claude read the Claude input box?** ~~RESOLVED — YES~~ (tested
   2026-07-06). Chromium's a11y tree is off by default (window = one opaque
   `AXGroup`), but forcing **`AXManualAccessibility=true`** on the Electron process
