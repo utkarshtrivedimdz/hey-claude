@@ -352,29 +352,38 @@ class RealAX:
             cur = _get(cur, "AXParent")
         return None, None
 
-    def _scan_focused(self) -> Optional[DialogBox]:
-        """Collect numbered buttons + radios within the focused session container → classify.
+    def _scan_focused_raw(self):
+        """Walk the focused session container once → (DialogBox | None, mic_button_present).
+
+        `mic_button_present` = the Voice-dictation button (AXDescription is the off/on label) is in
+        the tree. A dialog COVERS the input, so the mic button is absent while a box is up (§4) —
+        which makes "mic present" a positive "panel is rebuilt AND there's no dialog" signal, used
+        to end the post-raise settle early (the box usually isn't there on a plain switch).
 
         No tab-radio exclusion needed: the editor tab strip (AXTabGroup) lives ABOVE the session
         container, so a within-container walk never sees a tab radio.
         """
         container, session = self._focused_container()
         if container is None:
-            return None
+            return None, False
         from collections import deque
         raw: list[dict] = []
+        mic_present = False
         q = deque([container])
         seen = 0
         while q:
             node = q.popleft()
             seen += 1
             if seen > 4000:  # one session subtree is tiny; this only guards a pathological tree
-                log.warning("_scan_focused: node budget hit (4000 nodes)")
+                log.warning("_scan_focused_raw: node budget hit (4000 nodes)")
                 break
             try:
                 role = _get(node, "AXRole")
                 if role == "AXButton":
-                    label = _get(node, "AXTitle") or _get(node, "AXDescription")
+                    desc = _get(node, "AXDescription")
+                    if desc in (self._dict_off, self._dict_on):
+                        mic_present = True
+                    label = _get(node, "AXTitle") or desc
                     if label and NUMBERED.match(label):
                         raw.append({"role": "AXButton", "label": label,
                                     "enabled": bool(_get(node, "AXEnabled")), "selected": False})
@@ -385,24 +394,32 @@ class RealAX:
                                 "enabled": bool(_get(node, "AXEnabled")),
                                 "selected": _get(node, "AXValue") == 1})
             except Exception as e:
-                log.debug("_scan_focused: node raised, skipped: %r", e)
+                log.debug("_scan_focused_raw: node raised, skipped: %r", e)
             for c in (_get(node, "AXChildren") or []):
                 q.append(c)
-        return classify(raw, session=session)
+        return classify(raw, session=session), mic_present
+
+    def _scan_focused(self) -> Optional[DialogBox]:
+        return self._scan_focused_raw()[0]
 
     def find_dialog(self, settle_s: float = 0.3) -> Optional[DialogBox]:
-        """Scan the focused session for an open box, retrying until `settle_s` elapses.
+        """Scan the focused session for an open box, retrying until the panel tree is READY.
 
-        A box short-circuits immediately; only the None case spends the budget — which doubles as
-        the "require None to persist" anti-flicker before a RESOLVE (§6, #5) and the Path-B
-        post-raise settle window (§4). Callers that are ALREADY foreground pass settle_s≈0 (there's
-        no webview rebuild to wait out), so a no-dialog wake doesn't stall for the settle window.
+        Stops as soon as EITHER a dialog is found OR the mic button appears (tree rebuilt, no
+        dialog) — so a plain background→foreground switch with no dialog returns in ~one rebuild
+        (~560ms), not the whole `settle_s`. `settle_s` is only the upper bound while the tree is
+        still mid-rebuild (neither box nor mic visible yet). Finding a box first also serves the
+        "require None to persist" anti-flicker before a RESOLVE (§6, #5); already-foreground callers
+        pass settle_s≈0 (nothing to wait out) so a no-dialog wake never stalls.
         """
         waited = 0.0
         while True:
-            box = self._scan_focused()
+            box, mic = self._scan_focused_raw()
             if box is not None:
                 return box
+            if mic:
+                # Panel rebuilt and no dialog present → stop waiting (the common switch case).
+                return None
             if waited >= settle_s:
                 return None
             time.sleep(0.05)
