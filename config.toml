@@ -21,6 +21,10 @@ log_floor = 0.3        # log near-miss scores >= this (for threshold tuning)
 # drives the DICTATING state event-driven. Override only if the extension renames it.
 button_desc_off = "Voice dictation"   # AXDescription when OFF
 button_desc_on  = "Stop recording"    # AXDescription when ON (blue/recording)
+# Before looking for the button above, hey-claude reveals the Claude editor with
+# Cmd+Shift+Esc — the extension's BUILT-IN binding for claude-vscode.editor.open, so
+# there is nothing to add to VS Code keybindings.json (Cmd+Esc alone only focuses an
+# already-open view).
 
 [commands]
 # Option A: command word is dictated into the box then stripped. A required prefix

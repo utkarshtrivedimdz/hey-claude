@@ -55,6 +55,7 @@ single-user, always listening.[^wakeword]
 
 ```
 "hey claude"  →  launch/raise VS Code + open target workspace  →  verify frontmost (focus gate)
+         →  reveal Claude editor (Cmd+Shift+Esc → claude-vscode.editor.open, built-in)
          →  Cmd+Esc (focus Claude input) → AXPress the Voice-dictation button (start mic)
          →  you speak: "add a retry loop. okay send."
          →  hey-claude watches the box via AXObserver, sees the trailing "okay send"
@@ -82,6 +83,11 @@ Then grant permissions (one-time, **required** — the daemon is a new process):
 1. **System Settings → Privacy & Security → Accessibility** → add your `.venv/bin/python`
    (keystrokes + reading the box).
 2. **System Settings → Privacy & Security → Microphone** → add it too (wake listening).
+
+That's it — no VS Code `keybindings.json` edits. To reveal the Claude view on wake
+(even from a focused Markdown-preview webview or when the tab was closed) hey-claude uses
+**Cmd+Shift+Esc**, the Claude extension's built-in binding for
+`claude-vscode.editor.open`, so there's nothing to add by hand.
 
 hey-claude forces `AXManualAccessibility` on VS Code at startup so the input box becomes
 readable — no VoiceOver needed.

@@ -25,13 +25,23 @@ class RealKeys:
     def __init__(self, keymap: dict):
         self.k = keymap
 
-    def _key(self, code: int, cmd: bool = False) -> None:
-        mod = " using command down" if cmd else ""
-        _osa(f'tell application "System Events" to key code {code}{mod}')
+    def _key(self, code: int, mods: tuple = ()) -> None:
+        # mods: any of "command"/"control"/"shift"/"option" — AppleScript accepts a
+        # brace list even for a single modifier (using {command down}).
+        using = f" using {{{', '.join(f'{m} down' for m in mods)}}}" if mods else ""
+        _osa(f'tell application "System Events" to key code {code}{using}')
 
     def cmd_esc(self) -> None:
         log.debug("key: Cmd+Esc (focus Claude input)")
-        self._key(self.k["cmd_esc"], cmd=True)
+        self._key(self.k["cmd_esc"], mods=("command",))
+
+    def reveal_claude(self) -> None:
+        # Reveal the Claude editor via Cmd+Shift+Esc — the extension's BUILT-IN default
+        # binding for claude-vscode.editor.open (no keybindings.json edit needed). Fired as
+        # a keystroke so it escapes a focused webview (e.g. Markdown preview) and opens the
+        # tab when it was closed — cmd_esc/.focus only focus an already-open view (Q9).
+        log.debug("key: Cmd+Shift+Esc (reveal Claude editor: claude-vscode.editor.open)")
+        self._key(self.k["esc"], mods=("command", "shift"))
 
     def esc(self) -> None:
         log.debug("key: Esc")
@@ -55,8 +65,8 @@ class RealKeys:
 
     def clear(self) -> None:
         log.debug("key: Cmd+A + Delete (clear box)")
-        self._key(self.k["a"], cmd=True)   # Cmd+A (select all)
-        self._key(self.k["backspace"])     # delete
+        self._key(self.k["a"], mods=("command",))   # Cmd+A (select all)
+        self._key(self.k["backspace"])              # delete
 
     def type_text(self, s: str) -> None:
         if not s:

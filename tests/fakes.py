@@ -20,6 +20,7 @@ class FakeKeys:
         self.ops: list = []
 
     def cmd_esc(self): self.ops.append(("cmd_esc",))
+    def reveal_claude(self): self.ops.append(("reveal_claude",))
     def esc(self): self.ops.append(("esc",))
     def type_text(self, s): self.ops.append(("type", s))
     def backspace(self, n): self.ops.append(("backspace", n))
@@ -47,6 +48,8 @@ class FakeAX:
         self.dict_observing = False
         self._dict_cb = None
         self.button_present = button_present
+        self.ready_observing = False
+        self._ready_cb = None
         self.ops: list = []   # dictation ops (press_dictation)
 
     def set_manual_a11y(self): pass
@@ -97,6 +100,22 @@ class FakeAX:
         self._dict_on = is_on
         if self.dict_observing and self._dict_cb:
             self._dict_cb(is_on)
+
+    # readiness (Claude view opened) observer
+    def observe_ready(self, on_ready):
+        self.ready_observing = True
+        self._ready_cb = on_ready
+        return True
+
+    def stop_observing_ready(self):
+        self.ready_observing = False
+        self._ready_cb = None
+
+    def feed_ready(self):
+        """Simulate the Claude-view-ready AX event (tab opened, button now in the tree)."""
+        if self.ready_observing and self._ready_cb:
+            cb, self._ready_cb = self._ready_cb, None
+            cb()
 
 
 class FakeBootstrap:

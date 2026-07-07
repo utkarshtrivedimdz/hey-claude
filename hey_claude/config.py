@@ -34,6 +34,8 @@ def _default_keymap() -> dict:
     # macOS virtual key codes (verified: Esc/Cmd+Esc=53, Return=36, Delete=51)
     # (Cmd+D removed — dictation is driven by AXPress on the Voice-dictation button, not a
     #  keystroke, which collided with VS Code's multi-cursor shortcut. See DICTATION-AX-PLAN.)
+    # Reveal-Claude uses Esc (53) with Cmd+Shift — the extension's built-in binding for
+    # claude-vscode.editor.open, so no VS Code keybindings.json edit is required.
     return {"cmd_esc": 53, "esc": 53, "ret": 36, "backspace": 51, "a": 0}
 
 

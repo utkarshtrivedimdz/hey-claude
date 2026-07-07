@@ -306,9 +306,25 @@ durations — get settled by **data from real sessions**. Capture it locally.
 - **Q9 Keystroke conflicts:** ~~RESOLVED by testing~~ — **Cmd+Esc** focuses the
   Claude input from an unfocused window; **Cmd+D** drives dictation (tap).
   Resolution: always fire **Cmd+Esc → Cmd+D**, which moots the native-multicursor
-  conflict. (Residual, minor: the *fully-closed* panel case — "unfocused" was
-  tested, "closed" not explicitly; if Cmd+Esc doesn't reopen a closed view, add a
-  one-time "Focus Claude Input" command call. Not a v1 blocker.)
+  conflict. **Residual RESOLVED (2026-07-07):** the closed/non-Claude-tab case did
+  bite — waking on a focused Markdown-preview tab passed the window-level focus gate,
+  but the preview webview swallowed Cmd+Esc and the Voice-dictation button was absent
+  → turn aborted (and re-triggered in a loop). Fix: the arming path now fires
+  **Cmd+Shift+Esc** — the extension's built-in binding for **`claude-vscode.editor.open`**,
+  needing no keybindings.json edit — *before* Cmd+Esc, which reveals the Claude editor
+  even when closed or behind a webview. Ordering is now **Cmd+Shift+Esc → Cmd+Esc →
+  AXPress dictation**. (An earlier fix used a custom Cmd+Ctrl+Shift+J →
+  `claude-vscode.editor.openLast` chord, but that needed a hand-edit and just opened a
+  tab; the built-in does the same with nothing to install.)
+  **Follow-up RESOLVED (2026-07-07):** the reveal alone wasn't enough — `editor.open`
+  renders the Claude webview *asynchronously*, so probing the dictation button on the next
+  line lost the race and aborted; each abort dropped to IDLE and the next wake (continuous
+  speech) fired `editor.open` again → a pile of new Claude tabs. Fix: after the single
+  reveal, arming now **waits for the view via an AX readiness event** (`observe_ready` on
+  `AXFocusedUIElementChanged`, gated on the button appearing) instead of probing blind,
+  staying ARMED meanwhile so the self-trigger guard swallows the wake flood (N wakes → 1
+  reveal); `arm_timeout` backstops a view that never opens. Live-verified the event fires
+  reliably on reveal (ends on the `AXTextArea "Message input"`).
 - **Q10 Can hey-claude read the Claude input box?** ~~RESOLVED — YES~~ (tested
   2026-07-06). Chromium's a11y tree is off by default (window = one opaque
   `AXGroup`), but forcing **`AXManualAccessibility=true`** on the Electron process

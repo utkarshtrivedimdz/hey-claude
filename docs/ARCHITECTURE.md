@@ -178,6 +178,7 @@ sequenceDiagram
   SM->>BS: ensure_ready()
   BS->>VS: system.py: launch / open / raise
   BS->>BS: _focus_ok()? bundle+title
+  SM->>K: Cmd+Shift+Esc (editor.open: reveal Claude editor, built-in)
   SM->>K: Cmd+Esc (focus Claude input)
   SM->>AX: dictation_on()? + observe_dictation(on_change)
   SM->>AX: press_dictation() (AXPress the button)
