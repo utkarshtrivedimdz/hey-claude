@@ -57,6 +57,24 @@ Actionable task list (the aspirational roadmap lives in
   Only revisit if we go **desktop-wide** (no VS Code button visible in other apps). (§10)
 - [ ] **Spoken readback / confirm** before send, for fully eyes-free use. (§10)
 
+- [ ] **Attention sounds — "Claude needs you" audio cues.** Requested 2026-07-11. One
+  theme, two triggers (share the beep, differ in detection — build as one item, ship
+  the two triggers independently):
+  - **(a) Run-complete / waiting-for-input.** When Claude Code finishes its turn and
+    goes idle waiting on the user, play a distinct sound so the user knows it's their
+    move without watching the screen. Detection: the Voice-dictation button + AX panel
+    state we already observe should expose the idle/awaiting transition (reuse the
+    `AXTitleChanged`/AX-tree signal that drives the DICTATING ground truth); pick the
+    "stopped generating → prompt is idle" edge, debounce so it fires once per turn.
+  - **(b) Dialog-box appeared.** Recognize when a choice/permission/confirm dialog pops
+    up (the same `AXButton`/`AXRadioButton` panels `press_by_name` already walks) and
+    play a *different* sound, cueing the user that a response is required. Detection is
+    largely built: the AX tree walk exists; add an observer edge for "dialog rendered"
+    and beep on appearance.
+  - Distinct sounds per trigger (like the `deaf` beep pattern); make them
+    configurable/mutable in `[sounds]` (or `[commands]`) and off-able. Cheap MVP once
+    the AX edges are identified; the risk is reliable edge detection, not playback.
+
 ## Robustness / ops
 
 - [x] **Recover from mic device loss (Bluetooth drop silently deafened hey-claude).**
